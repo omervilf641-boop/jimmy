@@ -385,15 +385,62 @@ function unwrapArgs(args) {
   return args;
 }
 
+// The key the phone was given, if this browser is not the computer itself.
+let lanKey = localStorage.getItem("jarvisKey") || "";
+
+function jarvisHeaders() {
+  const h = { "Content-Type": "application/json" };
+  if (lanKey) h["X-Jarvis-Key"] = lanKey;
+  return h;
+}
+
+async function askForKey() {
+  const k = prompt(lang === "he"
+    ? "מפתח הגישה של ג'רוויס (מופיע בחלון של המחשב):"
+    : "Jarvis access key (printed in the window on your computer):");
+  if (!k) return false;
+  lanKey = k.trim();
+  localStorage.setItem("jarvisKey", lanKey);
+  return true;
+}
+
+/**
+ * Ask before doing the things you cannot undo.
+ *
+ * The server refuses destructive tools and hands back a token instead; this
+ * shows what is about to happen and sends the token only if you say yes. The
+ * refusal is the server's, not this function's — the page is not the only thing
+ * that can reach that endpoint, and a check that lives here protects nobody.
+ */
 async function runTool(name, rawArgs) {
   const args = unwrapArgs(rawArgs);
   if (name === "set_timer") return runTimerTool(args);
-  const r = await fetch("/tool", {
+
+  const post = (extra) => fetch("/tool", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, args }),
+    headers: jarvisHeaders(),
+    body: JSON.stringify({ name, args, ...extra }),
   });
-  return await r.json();
+
+  let r = await post({});
+  if (r.status === 401) {
+    if (!(await askForKey())) return { error: "no key" };
+    r = await post({});
+  }
+  let out = await r.json();
+
+  if (out && out.needs_confirmation) {
+    const question = (lang === "he" ? "ג'רוויס מבקש " : "Jarvis wants ") + out.asks + "?";
+    if (!confirm(question)) {
+      // The model is told plainly, so it explains rather than pretending it ran.
+      return { refused: true, error: lang === "he"
+        ? "לא אישרת את הפעולה הזאת."
+        : "You did not approve that action." };
+    }
+    const r2 = await post({ confirm_token: out.token });
+    out = await r2.json();
+  }
+  return out;
 }
 
 async function send(text) {
@@ -899,7 +946,7 @@ if (desktop) {
     wakeToggle.disabled = true;
     try {
       const res = await fetch("/tool", {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST", headers: jarvisHeaders(),
         body: JSON.stringify({ name: "wake_word", args: { on: localWakeOn } }),
       });
       const out = await res.json();
@@ -935,7 +982,7 @@ setInterval(tickClock, 20000);
 async function pollTelemetry() {
   try {
     const r = await fetch("/tool", {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST", headers: jarvisHeaders(),
       body: JSON.stringify({ name: "system_stats", args: {} }),
     });
     const s = await r.json();

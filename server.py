@@ -9,6 +9,9 @@ import json
 import os
 import subprocess
 import tempfile
+import hashlib
+import secrets
+import time
 import threading
 import webbrowser
 import datetime
@@ -872,6 +875,115 @@ TOOLS = {
 }
 
 
+
+# ---------------------------------------------------------------- the gate
+#
+# Every one of these tools ran the instant the model named it. Thirty-two tools,
+# no confirmation anywhere — and the thing choosing them is a 7B model running
+# locally, which has already been caught in this project reporting actions it
+# never performed. A model that invents a completed action is a model that can
+# invent `clear_notes`.
+#
+# So: destructive, outward-facing and settings-changing tools stop here and ask.
+# The check lives in the server rather than the page because the page is not the
+# only thing that can reach this endpoint.
+NEEDS_OK = {
+    "clear_notes":     "למחוק את כל הפתקים",
+    "forget_fact":     "למחוק משהו מהזיכרון ארוך הטווח",
+    "lock_computer":   "לנעול את המחשב",
+    "free_gpu":        "לשחרר את הזיכרון של הכרטיס המסך",
+    "mc_stop_server":  "לכבות את שרת המיינקראפט",
+    "volume":          "לשנות את עוצמת הקול של המערכת",
+    "open_url":        "לפתוח כתובת בדפדפן",
+    "open_app":        "להפעיל תוכנה",
+    "screenshot":      "לצלם את המסך",
+    "see_screen":      "לצלם את המסך ולשלוח אותו למודל",
+    "mc_autopilot":    "להפעיל או לכבות את הטייס האוטומטי",
+}
+
+_pending = {}
+_pending_lock = threading.Lock()
+PENDING_TTL = 120          # a request you have not answered in two minutes is stale
+
+
+def _fingerprint(name, args):
+    """A token is good for one exact request, not for the tool in general."""
+    blob = json.dumps({"n": name, "a": args}, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def gate_check(name, args, token):
+    """
+    Returns None to let the call through, or a dict to send back instead.
+
+    Approving one `open_app` does not pre-approve the next one: the token is
+    tied to these arguments and is thrown away the moment it is spent.
+    """
+    if name not in NEEDS_OK:
+        return None
+
+    now = time.time()
+    with _pending_lock:
+        for t, (_, exp) in list(_pending.items()):
+            if exp < now:
+                _pending.pop(t, None)
+
+        if token:
+            entry = _pending.get(token)
+            if entry and entry[0] == _fingerprint(name, args) and entry[1] >= now:
+                _pending.pop(token, None)          # single use
+                return None
+
+        fresh = secrets.token_urlsafe(16)
+        _pending[fresh] = (_fingerprint(name, args), now + PENDING_TTL)
+
+    detail = ", ".join(f"{k}={v}" for k, v in (args or {}).items())
+    return {
+        "needs_confirmation": True,
+        "token": fresh,
+        "tool": name,
+        "asks": NEEDS_OK[name] + (f" ({detail})" if detail else ""),
+    }
+
+
+
+# ------------------------------------------------------ letting the phone in
+#
+# The microphone is captured by the browser, not by Python, which means the page
+# opened on a phone uses the *phone's* microphone. That is the whole trick: talk
+# to Jarvis from anywhere in the house, no new hardware at all.
+#
+# It only needs the server to answer to something other than localhost — and the
+# moment it does, everyone on the WiFi can reach a machine that locks screens and
+# deletes notes. So opening up is opt-in and comes with a key.
+LAN = os.environ.get("JARVIS_LAN", "") == "1"
+LAN_KEY = os.environ.get("JARVIS_KEY", "") or secrets.token_hex(4)
+BIND = "0.0.0.0" if LAN else "127.0.0.1"
+
+
+def local_ip():
+    """The address the phone should be pointed at."""
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))          # no packet is sent; this just picks a route
+        return s.getsockname()[0]
+    except Exception:
+        return "127.0.0.1"
+    finally:
+        s.close()
+
+
+def key_ok(handler):
+    """Loopback is trusted; anything arriving over the network must carry the key."""
+    if not LAN:
+        return True
+    if handler.client_address[0] in ("127.0.0.1", "::1"):
+        return True
+    given = handler.headers.get("X-Jarvis-Key", "")
+    return secrets.compare_digest(given, LAN_KEY)
+
+
 _whisper = None
 _whisper_lock = threading.Lock()
 
@@ -979,6 +1091,11 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(payload)
 
     def do_POST(self):
+        # Guard the whole router. Guarding /tool alone still left /tts and /stt
+        # open — someone on the WiFi could not have deleted a note, but could
+        # have made the machine talk, and could have fed Whisper anything.
+        if not key_ok(self):
+            return self._send_json({"error": "unauthorised", "need_key": True}, 401)
         if self.path == "/stt":
             return self._handle_stt()
         if self.path == "/tts":
@@ -1012,11 +1129,15 @@ class Handler(SimpleHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length))
             name = body.get("name", "")
+            args = body.get("args") or {}
+            hold = gate_check(name, args, body.get("confirm_token"))
+            if hold is not None:
+                return self._send_json(hold)
             fn = TOOLS.get(name)
             if fn is not None:
-                result = fn(body.get("args") or {})
+                result = fn(args)
             elif MCP and MCP.has(name):
-                result = MCP.call(name, body.get("args") or {})
+                result = MCP.call(name, args)
             else:
                 result = {"error": f"כלי לא מוכר: {name}"}
         except Exception as e:
@@ -1066,4 +1187,8 @@ if __name__ == "__main__":
     os.chdir(BASE_DIR)
     start_mcp()
     print(f"Jarvis running at http://localhost:{PORT}")
-    ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+    if LAN:
+        print(f"  on the network:  http://{local_ip()}:{PORT}")
+        print(f"  access key:      {LAN_KEY}")
+        print("  open that address on your phone and paste the key once.")
+    ThreadingHTTPServer((BIND, PORT), Handler).serve_forever()

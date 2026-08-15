@@ -194,3 +194,33 @@ set JARVIS_VOICE=en_GB-northern_english_male-medium
 - **"Ollama לא זמין"** — הפעל את Ollama מתפריט התחל.
 - **תמלול נכשל** — `pip install faster-whisper`. ההרצה הראשונה מורידה את המודל (~140MB).
 - **אין קול** — אין קול עברי ב-Windows שלך. השתמש במצב אנגלית, או התקן קול עברי: הגדרות ← זמן ושפה ← דיבור.
+
+## Talking to Jarvis from your phone
+
+The microphone is captured by the browser, not by Python — so the page opened on
+a phone uses the *phone's* microphone. No new hardware, and the range is the
+whole house.
+
+    set JARVIS_LAN=1
+    python server.py
+
+It prints the address to open on the phone and a key. Paste the key once; the
+browser remembers it. Without `JARVIS_LAN` nothing changes: the server listens
+on localhost only, exactly as before.
+
+Requests from the computer itself never need the key. Requests from anywhere
+else always do, on every endpoint — not only the tools. Guarding `/tool` alone
+would still have let a stranger on the WiFi make the machine talk through `/tts`
+or hand Whisper whatever audio they liked.
+
+## The confirmation gate
+
+Thirty-two tools used to run the instant the model named one. The thing choosing
+them is a 7B model running locally, which has already been caught in this
+project reporting actions it never performed — and a model that invents a
+completed action is a model that can invent `clear_notes`.
+
+Anything destructive, outward-facing or settings-changing now stops and asks.
+The check is in the server, because the page is not the only thing that can
+reach that endpoint. Approving one action does not approve the next: the token
+is tied to those exact arguments, expires in two minutes, and is spent on use.
