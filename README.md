@@ -224,3 +224,34 @@ Anything destructive, outward-facing or settings-changing now stops and asks.
 The check is in the server, because the page is not the only thing that can
 reach that endpoint. Approving one action does not approve the next: the token
 is tied to those exact arguments, expires in two minutes, and is spent on use.
+
+## The orb on the desk
+
+The printed shell mirrors what the interface already shows. `setOrb` in the page
+is called at each of the four moments Jarvis has — listening, thinking,
+speaking, waiting — so that one function is the only hook, rather than a second
+list of call sites that would quietly go stale.
+
+    set JARVIS_ORB=192.168.1.42
+    python server.py
+
+Leave `JARVIS_ORB` unset and nothing changes.
+
+What goes over the wire is the state, not the sound. The board animates the
+breathing itself, which keeps the network out of the animation: a dropped packet
+costs a state change rather than a stutter, and at a glance nobody can tell a
+generic breath from one that follows the syllables.
+
+Repeats are dropped at both ends. The page sends only on a change, and the
+server refuses to send the same state twice.
+
+### Testing without the hardware
+
+`orb_stub.py` pretends to be the orb: it listens on the same UDP port and prints
+each state with the animation the firmware will have to produce.
+
+    python orb_stub.py
+
+Running it beside Jarvis exercises the whole computer-side path today. When the
+board arrives, only the firmware is new — and what it has to reproduce is
+already written down.

@@ -226,9 +226,30 @@ function hideSuggestions() {
   if (s) s.classList.add("hidden");
 }
 const IDLE_HINT = () => (lang === "he" ? "לחץ על הליבה כדי לדבר, או כתוב למטה" : "Click the core to talk, or type below");
+// The orb on the desk mirrors the orb on the screen.
+//
+// Hooking in here rather than at each call site is deliberate: this function is
+// already invoked at every one of the four moments that matter, and a second
+// list of places to remember to update is a list that goes stale.
+let lastOrbState = null;
+
+function tellTheOrb(state) {
+  const s = state || "idle";
+  if (s === lastOrbState) return;          // it only cares about changes
+  lastOrbState = s;
+  // Fire and forget. A shelf ornament that is unplugged must never be able to
+  // interrupt a conversation, so nothing here is awaited and nothing throws.
+  fetch("/orb", {
+    method: "POST",
+    headers: jarvisHeaders(),
+    body: JSON.stringify({ state: s }),
+  }).catch(() => {});
+}
+
 function setOrb(state, hint) {
   orb.className = state || "";
   orbHint.textContent = hint || IDLE_HINT();
+  tellTheOrb(state);
 }
 
 /* ---------- Ollama chat with tool-calling ---------- */

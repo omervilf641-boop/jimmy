@@ -984,6 +984,46 @@ def key_ok(handler):
     return secrets.compare_digest(given, LAN_KEY)
 
 
+
+# ---------------------------------------------------------------- the orb
+#
+# The printed shell on the desk shows what Jarvis is doing, using the state the
+# interface already knows: it listens, it thinks, it speaks, it waits. Those are
+# the only four things it ever does, and `setOrb` in the page is called at each
+# of them already — so nothing here has to guess.
+#
+# What goes over the wire is the state, not the sound. The board animates the
+# breathing itself, which keeps the network out of the animation: a dropped
+# packet costs a state change, not a stutter, and nobody watching can tell a
+# generic breath from one that follows the syllables.
+ORB_ADDR = os.environ.get("JARVIS_ORB", "")        # "192.168.1.42" or empty to disable
+ORB_PORT = int(os.environ.get("JARVIS_ORB_PORT", "8124") or 8124)
+ORB_STATES = {"idle", "listening", "thinking", "speaking"}
+
+_orb_sock = None
+_orb_last = None
+
+
+def orb_send(state):
+    """Fire a datagram at the orb. Never raises — the desk ornament being
+    unplugged must not break a conversation."""
+    global _orb_sock, _orb_last
+    if not ORB_ADDR:
+        return {"orb": "off"}
+    state = state if state in ORB_STATES else "idle"
+    if state == _orb_last:
+        return {"orb": state, "sent": False}      # nothing changed; stay quiet
+    try:
+        import socket
+        if _orb_sock is None:
+            _orb_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        _orb_sock.sendto(state.encode("ascii"), (ORB_ADDR, ORB_PORT))
+        _orb_last = state
+        return {"orb": state, "sent": True}
+    except Exception as e:
+        return {"orb": state, "sent": False, "error": str(e)}
+
+
 _whisper = None
 _whisper_lock = threading.Lock()
 
@@ -1115,6 +1155,13 @@ class Handler(SimpleHTTPRequestHandler):
                 "score": round(_wake_state["last_score"], 3),
                 "error": _wake_state["error"],
             })
+        if self.path == "/orb":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length)) if length else {}
+                return self._send_json(orb_send(str(body.get("state", "idle"))))
+            except Exception as e:
+                return self._send_json({"error": str(e)}, 500)
         if self.path == "/trace":
             try:
                 length = int(self.headers.get("Content-Length", 0))
@@ -1187,6 +1234,8 @@ if __name__ == "__main__":
     os.chdir(BASE_DIR)
     start_mcp()
     print(f"Jarvis running at http://localhost:{PORT}")
+    if ORB_ADDR:
+        print(f"  orb:             {ORB_ADDR}:{ORB_PORT}")
     if LAN:
         print(f"  on the network:  http://{local_ip()}:{PORT}")
         print(f"  access key:      {LAN_KEY}")
