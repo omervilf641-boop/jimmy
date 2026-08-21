@@ -480,6 +480,15 @@ async function send(text) {
 
   try {
     let rounds = 0;
+    // What has already been asked for this turn, as name + arguments.
+    //
+    // A 7B model given thirty-two tools and a message it cannot act on ("Jarvis.")
+    // will grab one at random and then keep grabbing it. Four identical calls to
+    // list_allowed_directories is not a plan, it is a stuck record — and running
+    // the tool again cannot possibly tell it anything the first call did not.
+    const alreadyAsked = new Map();
+    let ranOutOfRounds = true;
+
     while (rounds++ < 4) {
       let { content, toolCalls } = await chatOnce(bubble);
       if (toolCalls.length === 0) {
@@ -496,6 +505,7 @@ async function send(text) {
         history.push({ role: "assistant", content });
         saveHistory();
         trace.reply = content;
+        ranOutOfRounds = false;
         speak(content);
         break;
       }
@@ -509,8 +519,23 @@ async function send(text) {
         const fname = tc.function?.name || "?";
         let fargs = tc.function?.arguments || {};
         if (typeof fargs === "string") { try { fargs = JSON.parse(fargs); } catch { fargs = {}; } }
+        const signature = fname + ":" + JSON.stringify(fargs);
+        if (alreadyAsked.has(signature)) {
+          // Hand back what it already got, and say so, rather than doing the
+          // work twice and letting it loop until the rounds run out.
+          history.push({
+            role: supportsTools ? "tool" : "user",
+            tool_name: fname,
+            content: "You already called " + fname + " with these exact arguments. "
+              + "The result was: " + alreadyAsked.get(signature)
+              + " — do not call it again. Answer the question using it.",
+          });
+          continue;
+        }
+
         addMsg("tool-note", (TOOL_LABELS[fname] || "⚙ " + fname) + "…");
         const result = await runTool(fname, fargs);
+        alreadyAsked.set(signature, JSON.stringify(result, null, 0).slice(0, 400));
         const failed = !!(result && (result.error || /FAILED/.test(JSON.stringify(result))));
         trace.tool_calls.push({ name: fname, args: fargs, ok: !failed });
         if (failed) trace.failed = true;
@@ -523,6 +548,21 @@ async function send(text) {
       if (bubble.textContent === "…" || bubble.textContent === "") bubble.textContent = "…";
       else bubble = addMsg("jarvis", "…");
       setOrb("thinking", "ג'רוויס מעבד את התוצאה…");
+    }
+
+    // Falling out of the loop used to leave the bubble reading "…" for ever:
+    // four tool calls, no answer, and nothing said about why. Silence is the
+    // one response that gives you nothing to act on.
+    if (ranOutOfRounds) {
+      const stuck = lang === "he"
+        ? "נתקעתי — קראתי לכלים כמה פעמים ולא הגעתי לתשובה. תנסח את זה אחרת?"
+        : "I got stuck calling tools and never reached an answer. Try rephrasing?";
+      bubble.textContent = stuck;
+      history.push({ role: "assistant", content: stuck });
+      saveHistory();
+      trace.reply = stuck;
+      trace.failed = true;
+      setOrb("", "");
     }
   } catch (e) {
     bubble.textContent = ollamaOnline
