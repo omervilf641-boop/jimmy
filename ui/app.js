@@ -57,6 +57,19 @@ const SYSTEM_PROMPT_HE = `אתה ג'רוויס, עוזר אישי חכם שרץ 
 // English is the default: tool-calling is markedly more reliable, and the
 // browser has an English voice installed while it has no Hebrew one.
 let lang = localStorage.getItem("jarvis-lang") || "en";
+// The Minecraft paragraph is cut out unless the Minecraft tools are actually
+// going along with it. A prompt that describes a tool the model has not been
+// given is an invitation to invent a call to it — which is the failure this
+// whole change exists to stop.
+function systemPromptFor(text) {
+  const full = lang === "he" ? SYSTEM_PROMPT_HE : SYSTEM_PROMPT_EN;
+  if (MC_WORDS.test(String(text || "")) || mcInPlay) return full;
+  const cut = full.indexOf(lang === "he" ? "מיינקראפט: יש לך בוט" : "Minecraft: you control");
+  if (cut < 0) return full;
+  const rest = full.indexOf(String.fromCharCode(10, 10), cut);
+  return rest < 0 ? full.slice(0, cut).trim() : (full.slice(0, cut) + full.slice(rest + 2)).trim();
+}
+
 const SYSTEM_PROMPT = lang === "he" ? SYSTEM_PROMPT_HE : SYSTEM_PROMPT_EN;
 const SPEECH_LANG = lang === "he" ? "he-IL" : "en-US";
 
@@ -253,6 +266,67 @@ function setOrb(state, hint) {
 }
 
 /* ---------- Ollama chat with tool-calling ---------- */
+
+// Set the first time a Minecraft tool is used, so the block keeps travelling
+// for the rest of the session — once you are talking about the bot, you almost
+// certainly will again.
+let mcInPlay = false;
+
+/**
+ * Which tools the model is shown this turn.
+ *
+ * All thirty-one used to go out on every single message, and that is the
+ * direct cause of the loop in the screenshot: a 7B model handed a message it
+ * cannot act on ("Jarvis.") reaches for whatever is in front of it, and there
+ * was a great deal in front of it. Ten of the thirty-one were Minecraft, which
+ * is irrelevant to almost every sentence ever said to this thing.
+ *
+ * Nothing is removed — every tool still runs if it is asked for. They are just
+ * not all shouted at the model at once. The rest arrive when the sentence gives
+ * a reason for them to.
+ */
+const CORE_TOOLS = new Set([
+  "get_time", "open_app", "open_url", "search_web", "system_stats",
+  "see_screen", "remember_fact", "recall_facts",
+  "add_note", "read_notes", "save_project", "resume_project", "set_timer",
+]);
+
+// Summoned by the words that mean them. Deliberately generous — a false
+// positive costs one extra line in the prompt; a false negative means the model
+// cannot do the thing you just asked for.
+const ON_DEMAND = {
+  forget_fact:      /forget|תשכח|למחוק מהזיכרון/i,
+  clear_notes:      /clear.*note|מחק.*פתק|תמחק.*פתק/i,
+  list_projects:    /projects|פרויקט/i,
+  get_last_project: /last project|חזרתי|מה עשיתי/i,
+  volume:           /volume|louder|quieter|ווליום|קול/i,
+  lock_computer:    /lock|נעל/i,
+  screenshot:       /screenshot|צילום מסך|תצלם/i,
+  free_gpu:         /gpu|vram|כרטיס מסך|זיכרון גרפי/i,
+};
+
+const MC_TOOLS = new Set([
+  "mc_start_server", "mc_stop_server", "mc_autopilot", "mc_connect",
+  "mc_status", "mc_do", "mc_learn", "mc_teach", "mc_run_skill", "mc_skills",
+]);
+const MC_WORDS = /minecraft|מיינקראפט|jarvis bot|הבוט|לכרות|לבנות בית|שרת/i;
+
+function toolsFor(text) {
+  const said = String(text || "");
+  const wanted = new Set(CORE_TOOLS);
+
+  for (const [name, pattern] of Object.entries(ON_DEMAND)) {
+    if (pattern.test(said)) wanted.add(name);
+  }
+  // The whole Minecraft block travels together — asking about the bot and being
+  // offered only half of what it can do is worse than not being offered it.
+  if (MC_WORDS.test(said) || mcInPlay) {
+    for (const name of MC_TOOLS) wanted.add(name);
+  }
+
+  return TOOL_DEFS.filter((t) => wanted.has(t.function.name));
+}
+
 const TOOL_NAMES = new Set(TOOL_DEFS.map(t => t.function.name));
 
 // Some models emit tool calls as raw text instead of structured tool_calls —
@@ -320,7 +394,7 @@ async function chatOnce(bubble) {
     model: MODEL, messages: history, stream: true,
     keep_alive: "30m", options: { temperature: 0.6 },
   };
-  if (supportsTools) payload.tools = TOOL_DEFS;
+  if (supportsTools) payload.tools = toolsFor(lastUserText);
   let resp = await fetch(OLLAMA + "/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -464,8 +538,11 @@ async function runTool(name, rawArgs) {
   return out;
 }
 
+let lastUserText = "";
+
 async function send(text) {
   if (!text.trim() || busy) return;
+  lastUserText = text;
   busy = true;
   window.speechSynthesis.cancel(); stopVoice();
   addMsg("user", text);
@@ -533,6 +610,7 @@ async function send(text) {
           continue;
         }
 
+        if (fname.startsWith("mc_")) mcInPlay = true;
         addMsg("tool-note", (TOOL_LABELS[fname] || "⚙ " + fname) + "…");
         const result = await runTool(fname, fargs);
         alreadyAsked.set(signature, JSON.stringify(result, null, 0).slice(0, 400));

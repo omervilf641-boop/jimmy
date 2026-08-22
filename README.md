@@ -255,3 +255,17 @@ each state with the animation the firmware will have to produce.
 Running it beside Jarvis exercises the whole computer-side path today. When the
 board arrives, only the firmware is new — and what it has to reproduce is
 already written down.
+
+## Tests
+
+    node test_jarvis.js
+
+Seven checks over the two things that have actually gone wrong: which tools the
+model is offered, and what the tool loop does when the model will not stop
+asking. No framework, nothing to install.
+
+They were confirmed to be capable of failing — putting a Minecraft tool back
+into the always-on list makes the first one fail with "expected 13, got 14" —
+because a test that cannot fail is worse than no test at all. Two of these
+originally "passed" while returning a promise nobody awaited, which is exactly
+that, so `check` now refuses one.
