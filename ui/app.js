@@ -92,6 +92,9 @@ const TOOL_DEFS = [
   { type: "function", function: { name: "read_notes", description: "מחזיר את הפתקים השמורים של המשתמש", parameters: { type: "object", properties: {}, required: [] } } },
   { type: "function", function: { name: "clear_notes", description: "מוחק את כל הפתקים — רק לבקשה מפורשת של המשתמש", parameters: { type: "object", properties: {}, required: [] } } },
   { type: "function", function: { name: "set_timer", description: "קובע תזכורת. היא נשמרת אצל השרת ותגיע גם אם החלון נסגר בינתיים", parameters: { type: "object", properties: { minutes: { type: "number", description: "בעוד כמה דקות" }, message: { type: "string", description: "מה להזכיר" } }, required: ["minutes"] } } },
+  { type: "function", function: { name: "watch_status", description: "מה ג'רוויס בודק ברקע, מתי כל בדיקה תרוץ שוב, ומה מצבה", parameters: { type: "object", properties: {}, required: [] } } },
+  { type: "function", function: { name: "watch_log", description: "מה נקלט ברקע לאחרונה, כולל דברים שלא הפריעו", parameters: { type: "object", properties: { limit: { type: "number" } }, required: [] } } },
+  { type: "function", function: { name: "watch_pause", description: "מפסיק או מחזיר את המעקב ברקע. השיחה ממשיכה לעבוד בכל מקרה", parameters: { type: "object", properties: { paused: { type: "boolean", description: "true להפסיק, false להחזיר" } }, required: ["paused"] } } },
   { type: "function", function: { name: "list_reminders", description: "אילו תזכורות ממתינות ומתי כל אחת", parameters: { type: "object", properties: {}, required: [] } } },
   { type: "function", function: { name: "cancel_reminder", description: "מבטל תזכורת ממתינה לפי המילים שבה", parameters: { type: "object", properties: { message: { type: "string", description: "המילים שבתזכורת, או המזהה שלה" } }, required: ["message"] } } },
   { type: "function", function: { name: "volume", description: "שולט בעוצמת השמע של המחשב", parameters: { type: "object", properties: { action: { type: "string", enum: ["up","down","mute","unmute"] }, steps: { type: "number", description: "כמה צעדים (ברירת מחדל 5)" } }, required: ["action"] } } },
@@ -134,7 +137,8 @@ const TOOL_LABELS = {
   get_time: "🕐 בודק שעה", open_app: "🚀 פותח אפליקציה", open_url: "🌐 פותח אתר",
   search_web: "🔎 מחפש בגוגל", system_stats: "💻 בודק את המחשב",
   add_note: "📝 שומר פתק", read_notes: "📖 קורא פתקים", clear_notes: "🗑 מוחק פתקים",
-  set_timer: "⏰ קובע תזכורת", list_reminders: "⏰ בודק תזכורות", cancel_reminder: "⏰ מבטל תזכורת", volume: "🔊 משנה עוצמה", screenshot: "📸 מצלם מסך",
+  set_timer: "⏰ קובע תזכורת", list_reminders: "⏰ בודק תזכורות", cancel_reminder: "⏰ מבטל תזכורת",
+  watch_status: "👁 בודק על מה אני שם עין", watch_log: "👁 קורא את היומן", watch_pause: "👁 משנה את המעקב", volume: "🔊 משנה עוצמה", screenshot: "📸 מצלם מסך",
   lock_computer: "🔒 נועל את המחשב",
   mc_start_server: "🎮 מפעיל את המיינקראפט…", mc_stop_server: "🎮 סוגר את השרת",
   mc_autopilot: "🤖 מצב אוטונומי",
@@ -308,6 +312,7 @@ const CORE_TOOLS = new Set([
   "get_time", "open_app", "open_url", "search_web", "system_stats",
   "see_screen", "remember_fact", "recall_facts",
   "add_note", "read_notes", "save_project", "resume_project", "set_timer", "list_reminders",
+  "watch_status", "watch_log",
 ]);
 
 // Summoned by the words that mean them. Deliberately generous — a false
@@ -1568,3 +1573,42 @@ loadMcpTools();
 // minutes and cheap enough not to think about.
 collectReminders();
 setInterval(collectReminders, 15000);
+
+/**
+ * Anything Jarvis noticed while nobody was asking him.
+ *
+ * Same shape as the reminders and for the same reason: the watcher holds a
+ * notice until something takes it, so one raised while this window was shut is
+ * still here when it opens. Most ticks find nothing — a background loop that
+ * talks is a background loop you turn off within a week.
+ */
+async function collectNotices() {
+  let data;
+  try {
+    const r = await fetch("/notices", { method: "POST", headers: jarvisHeaders() });
+    if (!r.ok) return;
+    data = await r.json();
+  } catch { return; }
+  for (const n of data.due || []) {
+    chime();
+    const waited = n.waited > 120 ? ` (לפני ${Math.round(n.waited / 60)} דקות)` : "";
+    const el = addMsg("notice", "👁 " + n.text + waited);
+    // Every surfaced item is dismissible — an alert you cannot get rid of is
+    // one you learn to ignore, and then the next one is invisible too.
+    const x = document.createElement("button");
+    x.className = "notice-dismiss";
+    x.textContent = "×";
+    x.title = "אל תזכיר לי את זה שוב";
+    x.onclick = () => {
+      el.remove();
+      fetch("/tool", {
+        method: "POST", headers: jarvisHeaders(),
+        body: JSON.stringify({ name: "dismiss_notice", args: { id: n.id } }),
+      }).catch(() => {});
+    };
+    el.appendChild(x);
+    speak(n.text);
+  }
+}
+collectNotices();
+setInterval(collectNotices, 20000);

@@ -407,6 +407,69 @@ def tool_recall_facts(args):
     return out
 
 
+# ---------------------------------------------------------------- the watcher
+#
+# Everything else here waits to be spoken to. This runs on its own clock and
+# almost always finds nothing, which is the point — see watch.py for why it only
+# speaks on the edge between ok and not-ok rather than every time it looks.
+WATCH = None
+
+
+def start_watch():
+    global WATCH
+    if WATCH is not None:
+        return WATCH
+    try:
+        from watch import Watch
+        WATCH = Watch(DATA_DIR, lambda tag, msg: print(f"[{tag}] {msg}", flush=True))
+        WATCH.start()
+    except Exception as e:
+        # A watcher that fails to start must not stop Jarvis answering questions.
+        print(f"[watch] not running: {e}")
+        WATCH = None
+    return WATCH
+
+
+def tool_watch_status(_args=None):
+    """What is being watched, when each is next due, and what is waiting."""
+    if not WATCH:
+        return {"error": "המשגיח לא רץ"}
+    return WATCH.status()
+
+
+def tool_watch_log(args=None):
+    """The calm log: everything noticed lately, including what never interrupted."""
+    if not WATCH:
+        return {"error": "המשגיח לא רץ"}
+    items = WATCH.recent(int((args or {}).get("limit") or 15))
+    return {"count": len(items), "notices": items} if items \
+        else {"count": 0, "message": "שקט — לא היה שום דבר לדווח עליו"}
+
+
+def tool_watch_pause(args=None):
+    """The kill switch. Conversation keeps working; nothing gets watched."""
+    if not WATCH:
+        return {"error": "המשגיח לא רץ"}
+    want = (args or {}).get("paused")
+    paused = WATCH.set_paused(True if want is None else bool(want))
+    return {"paused": paused,
+            "message": "הפסקתי לשים לב לדברים ברקע" if paused
+                       else "חזרתי לשים לב לדברים ברקע"}
+
+
+def tool_dismiss_notice(args):
+    if not WATCH:
+        return {"error": "המשגיח לא רץ"}
+    nid = str((args or {}).get("id") or "").strip()
+    if not nid:
+        return {"error": "איזו הודעה?"}
+    # Once. Calling it twice meant the second call reported failure for a
+    # notice the first call had just dismissed.
+    if WATCH.dismiss(nid):
+        return {"dismissed": True}
+    return {"error": "לא מצאתי הודעה כזאת"}
+
+
 def tool_memory_for(args):
     """What the page folds into one turn: a small core, plus what fits the question."""
     query = str(args.get("query") or "")
@@ -1072,6 +1135,10 @@ TOOLS = {
     "remember_fact": tool_remember_fact,
     "recall_facts": tool_recall_facts,
     "memory_for": tool_memory_for,
+    "watch_status": tool_watch_status,
+    "watch_log": tool_watch_log,
+    "watch_pause": tool_watch_pause,
+    "dismiss_notice": tool_dismiss_notice,
     "forget_fact": tool_forget_fact,
     "trace_stats": tool_trace_stats,
     "save_project": tool_save_project,
@@ -1120,6 +1187,7 @@ NEEDS_OK = {
     "clear_notes":     "למחוק את כל הפתקים",
     "forget_fact":     "למחוק משהו מהזיכרון ארוך הטווח",
     "cancel_reminder": "לבטל תזכורת",
+    "watch_pause":     "להפסיק או להחזיר את המעקב ברקע",
     "lock_computer":   "לנעול את המחשב",
     "free_gpu":        "לשחרר את הזיכרון של הכרטיס המסך",
     "mc_stop_server":  "לכבות את שרת המיינקראפט",
@@ -1385,6 +1453,10 @@ class Handler(SimpleHTTPRequestHandler):
                 "score": round(_wake_state["last_score"], 3),
                 "error": _wake_state["error"],
             })
+        if self.path == "/notices":
+            if not WATCH:
+                return self._send_json({"due": [], "watching": False})
+            return self._send_json({"due": WATCH.due_notices(), "watching": True})
         if self.path == "/reminders":
             # Whatever fell due while nobody was looking. Claiming them here is
             # what makes the reminder survive a closed window: it stays waiting
@@ -1468,6 +1540,8 @@ class Handler(SimpleHTTPRequestHandler):
 if __name__ == "__main__":
     os.chdir(BASE_DIR)
     start_mcp()
+    if start_watch():
+        print("  watching:        disk, gpu, ollama, minecraft — edit watch.json to change")
     print(f"Jarvis running at http://localhost:{PORT}")
     if ORB_ADDR:
         print(f"  orb:             {ORB_ADDR}:{ORB_PORT}")

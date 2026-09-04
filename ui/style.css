@@ -387,6 +387,27 @@ body::after {
   text-align: center;
 }
 
+/* Something Jarvis noticed on his own. Different from both a reply and a tool
+   line, because it did not come from anything you said. */
+.msg.notice {
+  align-self: stretch; max-width: 100%;
+  position: relative;
+  padding: 9px 34px 9px 14px;
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.55;
+  color: var(--amber, #ffcc66);
+  background: rgba(255, 204, 102, 0.07);
+  border: 1px solid rgba(255, 204, 102, 0.3);
+  border-inline-start-width: 3px;
+}
+.notice-dismiss {
+  position: absolute; inset-inline-end: 6px; top: 5px;
+  width: 22px; height: 22px; padding: 0;
+  font: inherit; font-size: 15px; line-height: 1;
+  color: inherit; opacity: .5;
+  background: none; border: 0; cursor: pointer;
+}
+.notice-dismiss:hover, .notice-dismiss:focus-visible { opacity: 1; }
+
 /* A tool that failed must not look like one that worked. This is the one place
    the transcript can contradict what Jarvis is about to say, so it is worth
    being loud about. */
