@@ -379,6 +379,21 @@ body::after {
   border: 1px solid rgba(79, 240, 174, 0.22);
   clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 50%, calc(100% - 8px) 100%, 8px 100%, 0 50%);
   backdrop-filter: none;
+  /* The line now carries the tool's actual result, which can be long. Let it
+     wrap rather than trailing off the edge — a truncated value is worse than
+     no value, because it looks like the whole answer. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
+/* A tool that failed must not look like one that worked. This is the one place
+   the transcript can contradict what Jarvis is about to say, so it is worth
+   being loud about. */
+.msg.tool-note.tool-failed {
+  color: var(--red, #ff6b6b);
+  background: rgba(255, 107, 107, 0.06);
+  border-color: rgba(255, 107, 107, 0.35);
 }
 
 #suggestions { display: flex; flex-wrap: wrap; gap: 7px; padding: 4px 0 2px; }

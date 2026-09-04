@@ -443,6 +443,37 @@ async function chatOnce(bubble) {
   return { content: stripToolMarkup(full), toolCalls };
 }
 
+/**
+ * A tool result in one short line, for the transcript.
+ *
+ * Not JSON.stringify: that puts a wall of braces in the middle of a
+ * conversation and nobody reads it, which defeats the point of showing it.
+ * The values are what matter — those are the things a reply can get wrong.
+ */
+function summarise(result) {
+  if (result === null || result === undefined) return "—";
+  if (typeof result !== "object") return String(result).slice(0, 120);
+  if (result.error) return "❌ " + String(result.error).slice(0, 120);
+  if (result.needs_confirmation) return "ממתין לאישור";
+
+  const parts = [];
+  for (const [k, v] of Object.entries(result)) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "id" || k === "token") continue;            // machine detail, not news
+    if (Array.isArray(v)) {
+      parts.push(`${k}: ${v.length}`);
+    } else if (typeof v === "object") {
+      parts.push(`${k}: {…}`);
+    } else if (v === true) {
+      parts.push(k);
+    } else {
+      parts.push(`${k}: ${String(v).slice(0, 60)}`);
+    }
+    if (parts.length >= 5) break;
+  }
+  return parts.length ? parts.join(" · ") : "בוצע";
+}
+
 function chime() {
   try {
     const ac = new (window.AudioContext || window.webkitAudioContext)();
@@ -624,20 +655,60 @@ async function send(text) {
         }
 
         if (fname.startsWith("mc_")) mcInPlay = true;
-        addMsg("tool-note", (TOOL_LABELS[fname] || "⚙ " + fname) + "…");
+        const note = addMsg("tool-note", (TOOL_LABELS[fname] || "⚙ " + fname) + "…");
         const result = await runTool(fname, fargs);
         alreadyAsked.set(signature, JSON.stringify(result, null, 0).slice(0, 400));
         const failed = !!(result && (result.error || /FAILED/.test(JSON.stringify(result))));
         trace.tool_calls.push({ name: fname, args: fargs, ok: !failed });
         if (failed) trace.failed = true;
+
+        // Put what the tool actually returned on screen, next to what Jarvis is
+        // about to say about it.
+        //
+        // Until now the transcript said "⏰ setting a reminder…" and stopped
+        // there, so a reply that misdescribed the result looked exactly like one
+        // that got it right. The model choosing these tools has already been
+        // caught in this project reporting actions it never took; the cheapest
+        // defence against that is not a cleverer prompt, it is making the truth
+        // visible in the same place as the claim.
+        note.textContent = (TOOL_LABELS[fname] || "⚙ " + fname) + " → " + summarise(result);
+        note.classList.toggle("tool-failed", failed);
+
         if (supportsTools) {
           history.push({ role: "tool", tool_name: fname, content: JSON.stringify(result, null, 0) });
         } else {
           history.push({ role: "user", content: "[תוצאת הכלי " + fname + "]: " + JSON.stringify(result, null, 0) });
         }
+
+        // A failure has to be said out loud, not glossed over.
+        //
+        // The JSON above already carries {"error": …}, and a 7B model reads
+        // straight past it and announces success anyway — the documented
+        // failure of this whole project. Saying it a second time in plain
+        // words is the same trick that already works for a repeated call.
+        if (failed) {
+          const why = (result && (result.error || result.message)) || "the tool reported a failure";
+          history.push({
+            role: supportsTools ? "tool" : "user",
+            tool_name: fname,
+            content: "IMPORTANT: " + fname + " did NOT succeed. Reason: " + why +
+              ". Tell the user it failed and why. Do not say it worked, and do not "
+              + "describe a result you did not receive.",
+          });
+        }
       }
-      if (bubble.textContent === "…" || bubble.textContent === "") bubble.textContent = "…";
-      else bubble = addMsg("jarvis", "…");
+      // Keep the answer underneath the evidence for it.
+      //
+      // The empty bubble is created before the tools run, so reusing it left
+      // the reply sitting above the tool line that produced it — the conclusion
+      // printed before the working. Moving it to the end costs one DOM call and
+      // makes the transcript read in the order things actually happened.
+      if (bubble.textContent === "…" || bubble.textContent === "") {
+        bubble.textContent = "…";
+        chatEl.appendChild(bubble);
+      } else {
+        bubble = addMsg("jarvis", "…");
+      }
       setOrb("thinking", "ג'רוויס מעבד את התוצאה…");
     }
 
