@@ -51,17 +51,28 @@ function loadPicker() {
     "\nreturn { toolsFor, promptFor: systemPromptFor };")();
 }
 
-function runLoop({ stubborn }) {
+function loadSummarise() {
+  const body = slice("function summarise(result) {", "\nfunction chime()", "summarise");
+  return new Function(body + "\nreturn { summarise };")();
+}
+
+function runLoop({ stubborn, failing }) {
   const body = slice("    let rounds = 0;", "  } catch (e) {", "the tool loop");
+  const summariser = slice("function summarise(result) {", "\nfunction chime()", "summarise");
   const ran = [];
-  const shell = { textContent: "…" };
+  // The loop now labels each tool line with what came back and marks the
+  // failed ones, so the stub needs a classList like a real element has.
+  const shell = { textContent: "…", classList: { toggle() {}, add() {}, remove() {} } };
   let call = 0;
   const env = {
     lang: "he", history: [], supportsTools: true, toolsRan: false, nudged: false,
     trace: { tool_calls: [], reply: "", failed: false },
     bubble: shell, saveHistory() {}, speak() {}, setOrb() {},
     addMsg: () => shell, claimsAnAction: () => false, TOOL_LABELS: {},
-    runTool: async (n) => { ran.push(n); return { ok: true }; },
+    // The loop moves the reply below the tool lines, and labels each with what
+    // the tool actually returned.
+    chatEl: { appendChild() {}, scrollTop: 0, scrollHeight: 0, querySelectorAll: () => [] },
+    runTool: async (n) => { ran.push(n); return failing ? { error: "לא הצלחתי" } : { ok: true }; },
     chatOnce: async () => {
       call++;
       if (!stubborn && call > 2) return { content: "done.", toolCalls: [] };
@@ -69,25 +80,28 @@ function runLoop({ stubborn }) {
     },
   };
   const fn = new Function(...Object.keys(env),
-    "return (async () => {\n" + body + "\nreturn bubble.textContent;\n})();");
-  return fn(...Object.values(env)).then((shown) => ({ ran, shown }));
+    summariser + "\nreturn (async () => {\n" + body + "\nreturn bubble.textContent;\n})();");
+  return fn(...Object.values(env)).then((shown) => ({ ran, shown, history: env.history }));
 }
 
 async function main() {
   console.log("\nthe tool picker");
 
-  await check("thirteen by default, and no Minecraft among them", () => {
+  await check("sixteen by default, and no Minecraft among them", () => {
     const got = loadPicker().toolsFor("Jarvis.");
-    if (got.length !== 13) throw new Error(`expected 13, got ${got.length}`);
+    // Thirteen, plus the three that arrived with reminders and the watcher:
+    // list_reminders, watch_status and watch_log. The rest of each of those
+    // groups is destructive or a settings change and waits to be asked for.
+    if (got.length !== 16) throw new Error(`expected 16, got ${got.length}`);
     if (got.some((t) => t.function.name.startsWith("mc_"))) throw new Error("Minecraft leaked");
-    return "13 sent";
+    return "16 sent";
   });
 
   await check("asking about the bot brings the whole Minecraft block", () => {
     const got = loadPicker().toolsFor("send the minecraft bot to mine iron");
-    if (got.length !== 23) throw new Error(`expected 23, got ${got.length}`);
+    if (got.length !== 26) throw new Error(`expected 26, got ${got.length}`);
     if (!got.some((t) => t.function.name === "mc_do")) throw new Error("mc_do missing");
-    return "23 sent";
+    return "26 sent";
   });
 
   await check("a word summons the tool it means, and only then", () => {
@@ -104,6 +118,41 @@ async function main() {
     if (/mc_do/.test(promptFor("what time is it"))) throw new Error("still describes mc_do");
     if (!/mc_do/.test(promptFor("start the minecraft server"))) throw new Error("dropped it when asked");
     return "prompt follows the tools";
+  });
+
+  console.log("\nwhat the tool actually returned");
+
+  await check("a result is summarised, not dumped as JSON", () => {
+    const { summarise } = loadSummarise();
+    const line = summarise({ set: true, id: "r1", message: "לבדוק", when: "עוד 45 דקות" });
+    if (line.includes("{") || line.includes('"')) throw new Error("that is JSON: " + line);
+    if (!line.includes("עוד 45 דקות")) throw new Error("lost the value: " + line);
+    if (line.includes("r1")) throw new Error("kept the machine detail: " + line);
+    return line;
+  });
+
+  await check("an error is shown as an error", () => {
+    const { summarise } = loadSummarise();
+    const line = summarise({ error: "אין תנור בסביבה" });
+    if (!line.startsWith("❌")) throw new Error("not marked as a failure: " + line);
+    return line;
+  });
+
+  await check("a failed tool is told to the model in words", async () => {
+    const out = await runLoop({ stubborn: false, failing: true });
+    const told = out.history.filter(
+      (m) => typeof m.content === "string" && m.content.includes("did NOT succeed"));
+    if (!told.length) throw new Error("nothing warned the model it failed");
+    if (!told[0].content.includes("לא הצלחתי")) throw new Error("the reason was dropped");
+    return "told once, with the reason";
+  });
+
+  await check("a tool that works is not warned about", async () => {
+    const out = await runLoop({ stubborn: false, failing: false });
+    const told = out.history.filter(
+      (m) => typeof m.content === "string" && m.content.includes("did NOT succeed"));
+    if (told.length) throw new Error("warned about a tool that worked");
+    return "quiet";
   });
 
   console.log("\nthe tool loop");
