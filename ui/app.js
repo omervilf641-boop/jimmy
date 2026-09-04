@@ -157,6 +157,22 @@ const clearBtn = document.getElementById("clear-btn");
 const voiceWarning = document.getElementById("voice-warning");
 
 let history = [{ role: "system", content: SYSTEM_PROMPT }];
+
+// The system prompt is assembled, not accumulated.
+//
+// Both the memory block and the MCP note used to be appended straight onto
+// history[0].content, which meant two things went wrong quietly: the prompt grew
+// every time either loader ran, and "new chat" replaced history[0] with the bare
+// prompt — so starting a fresh conversation made Jarvis forget everything he
+// knew about you until the page was reloaded. Keeping the pieces separate and
+// rebuilding from them fixes both.
+let memoryBlock = "";
+let mcpBlock = "";
+function rebuildSystemPrompt() {
+  if (history[0] && history[0].role === "system") {
+    history[0].content = SYSTEM_PROMPT + mcpBlock + memoryBlock;
+  }
+}
 let busy = false;
 let speakEnabled = localStorage.getItem("jarvis-speak") !== "off";
 let convoMode = localStorage.getItem("jarvis-convo") === "on";
@@ -204,6 +220,7 @@ function loadHistory() {
 }
 clearBtn.addEventListener("click", () => {
   history = [{ role: "system", content: SYSTEM_PROMPT }];
+  rebuildSystemPrompt();          // a new conversation, not a new amnesiac
   localStorage.removeItem("jarvis-history");
   chatEl.innerHTML = "";
   greet();
@@ -590,6 +607,7 @@ async function send(text) {
   busy = true;
   window.speechSynthesis.cancel(); stopVoice();
   addMsg("user", text);
+  const recalled = await memoryForTurn(text);
   history.push({ role: "user", content: text });
 
   // Everything this turn does gets recorded — it is the training corpus.
@@ -736,6 +754,11 @@ async function send(text) {
     setOrb("", "");
   } finally {
     busy = false;
+    // The turn's recalled facts go back out. They were for this question.
+    if (recalled) {
+      const at = history.indexOf(recalled);
+      if (at >= 0) history.splice(at, 1);
+    }
     for (const el of chatEl.querySelectorAll(".msg.typing")) el.classList.remove("typing");
     if (!window.speechSynthesis.speaking && !currentVoiceSource) setOrb("", "");
     if (!trace.reply) trace.reply = bubble.textContent || "";
@@ -1431,27 +1454,75 @@ async function speakWithPiper(text) {
 }
 
 /* ================= what Jarvis knows about you ================= */
-// Facts are loaded once and folded into the system prompt, so Jarvis simply
-// knows you rather than having to look you up mid-sentence.
+//
+// Every fact used to go into the system prompt, all of them, on every request.
+// That is fine at twenty facts and stops being fine somewhere past a hundred:
+// the window fills with things that have nothing to do with what was asked, and
+// the model starts dropping the beginning of the conversation to make room.
+//
+// So it comes in two parts now. A capped core — the most recent thirty — is
+// what Jarvis simply knows. Everything beyond that is fetched per message, by
+// keyword, and lives only for that turn.
+const CORE_FACTS = 30;
+const TURN_FACTS = 8;
+let knownCore = [];
+
+function factHeader(kind) {
+  if (kind === "turn") {
+    return lang === "he"
+      ? "\n\nרלוונטי למה שנשאלת עכשיו:\n"
+      : "\n\nRelevant to what was just asked:\n";
+  }
+  return lang === "he"
+    ? "\n\nמה שאתה יודע על המשתמש (השתמש בזה בטבעיות, אל תצטט אותו):\n"
+    : "\n\nWhat you know about the user (use it naturally, never recite it back):\n";
+}
+
 async function loadUserFacts() {
   try {
     const res = await fetch("/tool", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "recall_facts", args: {} }),
+      method: "POST", headers: jarvisHeaders(),
+      body: JSON.stringify({ name: "memory_for", args: { query: "", core: CORE_FACTS } }),
     });
     const out = await res.json();
-    if (!out.facts || !out.facts.length) return;
-
-    const header = lang === "he"
-      ? "\n\nמה שאתה יודע על המשתמש (השתמש בזה בטבעיות, אל תצטט אותו):\n"
-      : "\n\nWhat you know about the user (use it naturally, never recite it back):\n";
-    const block = header + out.facts.map((f) => "- " + f).join("\n");
-
-    // history[0] is the system message the conversation runs on
-    if (history[0] && history[0].role === "system") history[0].content += block;
+    knownCore = out.core || [];
+    if (!knownCore.length) return;
+    memoryBlock = factHeader("core") + knownCore.map((f) => "- " + f).join("\n");
+    if (out.known > knownCore.length) {
+      memoryBlock += lang === "he"
+        ? `\n(יש עוד ${out.known - knownCore.length} דברים שאתה יודע — recall_facts כדי לחפש בהם)`
+        : `\n(${out.known - knownCore.length} more are stored — use recall_facts to search them)`;
+    }
+    rebuildSystemPrompt();
   } catch { /* no memory is survivable; a broken startup is not */ }
 }
 loadUserFacts();
+
+/**
+ * The facts that bear on this particular message, for this turn only.
+ *
+ * Returns the entry pushed into history so the caller can take it out again —
+ * leaving them in would rebuild the very pile this was written to avoid, one
+ * message at a time.
+ */
+async function memoryForTurn(text) {
+  try {
+    const res = await fetch("/tool", {
+      method: "POST", headers: jarvisHeaders(),
+      body: JSON.stringify({ name: "memory_for", args: { query: text, core: 0, limit: TURN_FACTS } }),
+    });
+    const out = await res.json();
+    const fresh = (out.relevant || []).filter((f) => !knownCore.includes(f));
+    if (!fresh.length) return null;
+    const entry = {
+      role: "system",
+      transient: true,
+      content: factHeader("turn") + fresh.map((f) => "- " + f).join("\n"),
+    };
+    history.push(entry);
+    return entry;
+  } catch { return null; }
+}
 
 Object.assign(TOOL_LABELS, {
   see_screen: "👁 מסתכל על המסך…",
@@ -1483,7 +1554,8 @@ async function loadMcpTools() {
     const note = lang === "he"
       ? `\n\nכלים נוספים משרתי MCP (השתמש בהם כמו בכל כלי אחר): ${names}`
       : `\n\nExtra tools from MCP servers (use them like any other tool): ${names}`;
-    if (history[0] && history[0].role === "system") history[0].content += note;
+    mcpBlock = note;
+    rebuildSystemPrompt();
 
     console.log(`MCP: added ${out.tools.length} tools`);
   } catch { /* MCP is optional; Jarvis works fine without it */ }

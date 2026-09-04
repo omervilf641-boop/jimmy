@@ -325,16 +325,96 @@ def tool_remember_fact(args):
     return {"remembered": text, "total": len(facts)}
 
 
+# Words too common to tell one fact from another. Matching on these is what
+# makes a keyword search return everything, which is the same as returning
+# nothing.
+_STOP = {
+    "של", "את", "אני", "הוא", "היא", "עם", "על", "לא", "כן", "זה", "זאת", "מה",
+    "יש", "אין", "כל", "גם", "אבל", "כי", "אם", "או", "הם", "אתה", "היה", "צריך",
+    "the", "a", "an", "and", "or", "but", "if", "is", "are", "was", "to", "of",
+    "in", "on", "it", "he", "she", "they", "you", "i", "my", "me", "for", "that",
+    "this", "with", "at", "be", "have", "has", "do", "does", "what", "how",
+}
+
+
+def _words(text):
+    cleaned = "".join(ch if ch.isalnum() else " " for ch in str(text).lower())
+    return {w for w in cleaned.split() if len(w) > 2 and w not in _STOP}
+
+
+def _score(fact, wanted):
+    """How much this fact has to do with what was just asked."""
+    if not wanted:
+        return 0.0
+    have = _words(fact.get("fact", "")) | _words(fact.get("category", ""))
+    if not have:
+        return 0.0
+    shared = have & wanted
+    if not shared:
+        return 0.0
+    # Overlap, weighted so a short pointed fact beats a long rambling one that
+    # happens to contain the same word.
+    return len(shared) / (len(have) ** 0.5)
+
+
+def relevant_facts(query, limit=8):
+    """The facts worth putting in front of the model for *this* message.
+
+    Loading all of them into the system prompt works at twenty and stops working
+    somewhere past a hundred: the window fills with things that have nothing to
+    do with what was asked, and the model starts forgetting the beginning of the
+    conversation to make room. This is a keyword search and nothing cleverer --
+    no embeddings, no second model, nothing to install -- which is enough to
+    tell "what do you know about my printer" from a fact about someone's cat.
+    """
+    facts = _load_facts()
+    wanted = _words(query)
+    scored = [(_score(f, wanted), i, f) for i, f in enumerate(facts)]
+    hits = sorted([t for t in scored if t[0] > 0], key=lambda t: (-t[0], -t[1]))
+    return [f for _, _, f in hits[:limit]]
+
+
+def core_facts(limit=30):
+    """What Jarvis should simply know, without being asked.
+
+    The newest, on the grounds that a fact told recently is the one most likely
+    to still be true -- and capped, because this goes into every single request.
+    """
+    return _load_facts()[-limit:]
+
+
 def tool_recall_facts(args):
     """Everything Jarvis knows about the user, optionally filtered."""
     facts = _load_facts()
+    total = len(facts)
     query = str(args.get("about", "")).strip().lower()
     if query:
+        # Substring first, so "מדפסת" finds a fact that merely contains the
+        # word; the scored search behind it catches a whole phrased question.
         facts = [f for f in facts
                  if query in f["fact"].lower() or query in f.get("category", "").lower()]
-    return {"count": len(facts), "facts": [f["fact"] for f in facts]} if facts \
-        else {"count": 0, "message": "עוד לא סיפרת לי כלום על עצמך"}
+        if not facts:
+            facts = relevant_facts(query, limit=int(args.get("limit") or 12))
+    if not facts:
+        return {"count": 0, "known": total,
+                "message": "לא מצאתי משהו שקשור לזה" if query
+                           else "עוד לא סיפרת לי כלום על עצמך"}
+    limit = int(args.get("limit") or 40)
+    shown = facts[:limit]
+    out = {"count": len(shown), "known": total, "facts": [f["fact"] for f in shown]}
+    if len(facts) > len(shown):
+        out["more"] = len(facts) - len(shown)
+    return out
 
+
+def tool_memory_for(args):
+    """What the page folds into one turn: a small core, plus what fits the question."""
+    query = str(args.get("query") or "")
+    return {
+        "core": [f["fact"] for f in core_facts(int(args.get("core") or 30))],
+        "relevant": [f["fact"] for f in relevant_facts(query, int(args.get("limit") or 8))],
+        "known": len(_load_facts()),
+    }
 
 def tool_forget_fact(args):
     """Drop a fact — wrong, outdated, or simply private."""
@@ -991,6 +1071,7 @@ TOOLS = {
     "system_stats": tool_system_stats,
     "remember_fact": tool_remember_fact,
     "recall_facts": tool_recall_facts,
+    "memory_for": tool_memory_for,
     "forget_fact": tool_forget_fact,
     "trace_stats": tool_trace_stats,
     "save_project": tool_save_project,
