@@ -502,6 +502,151 @@ def tool_clear_notes(_args):
 VOLUME_KEYS = {"up": 175, "down": 174, "mute": 173, "unmute": 173}
 
 
+# ---------------------------------------------------------------- reminders
+#
+# These used to live in the page: set_timer called setTimeout, and closing the
+# window threw the reminder away without telling anyone. You could ask for a
+# reminder in an hour, be told "fine", close the tab, and nothing would ever
+# happen — the failure was silent and it landed on exactly the feature you are
+# most likely to trust.
+#
+# So a reminder is a row in a file, and it is not "done" when it falls due, it
+# is done when something has actually delivered it. A reminder that came due
+# while the window was shut is still waiting when you open it again, which is
+# the whole point.
+REMINDERS_FILE = _user_file("reminders.json")
+_reminders_lock = threading.Lock()
+
+
+def _load_reminders():
+    try:
+        with open(REMINDERS_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, list) else []
+    except (FileNotFoundError, ValueError):
+        return []
+
+
+def _save_reminders(items):
+    tmp = REMINDERS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(items, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, REMINDERS_FILE)      # never leave a half-written file
+
+
+def _when(seconds_away):
+    """How a person would say it, rather than a timestamp."""
+    m = int(round(seconds_away / 60.0))
+    if m < 1:
+        return "עוד פחות מדקה"
+    if m < 60:
+        return f"עוד {m} דקות" if m > 1 else "עוד דקה"
+    h, rem = divmod(m, 60)
+    if h < 24:
+        return f"עוד {h} שעות" + (f" ו-{rem} דקות" if rem else "")
+    d = h // 24
+    return f"עוד {d} ימים" if d > 1 else "מחר"
+
+
+def tool_set_timer(args):
+    """Set a reminder that outlives the window it was asked for in."""
+    try:
+        minutes = float(args.get("minutes") or args.get("in_minutes") or 0)
+    except (TypeError, ValueError):
+        minutes = 0
+    if minutes <= 0:
+        return {"error": "צריך מספר דקות גדול מאפס"}
+    if minutes > 60 * 24 * 30:
+        return {"error": "זה יותר מחודש — כנראה לא מה שהתכוונת"}
+
+    message = str(args.get("message") or args.get("text") or "").strip() or "התזכורת שביקשת"
+    now = time.time()
+    item = {
+        "id": f"r{int(now * 1000)}",
+        "created": now,
+        "due": now + minutes * 60.0,
+        "message": message,
+        "delivered": False,
+    }
+    with _reminders_lock:
+        items = _load_reminders()
+        items.append(item)
+        # Keep the file from growing forever: delivered ones older than a day go.
+        items = [r for r in items
+                 if not r.get("delivered") or now - r.get("due", 0) < 86400]
+        _save_reminders(items)
+    return {"set": True, "id": item["id"], "message": message,
+            "when": _when(minutes * 60.0), "minutes": minutes}
+
+
+def tool_list_reminders(_args=None):
+    now = time.time()
+    with _reminders_lock:
+        items = [r for r in _load_reminders() if not r.get("delivered")]
+    items.sort(key=lambda r: r.get("due", 0))
+    if not items:
+        return {"reminders": [], "count": 0, "message": "אין תזכורות ממתינות"}
+    return {
+        "count": len(items),
+        "reminders": [{
+            "id": r["id"],
+            "message": r["message"],
+            "when": _when(r["due"] - now) if r["due"] > now else "כבר עבר הזמן",
+        } for r in items],
+    }
+
+
+def tool_cancel_reminder(args):
+    """Cancel one by id, or by the words in it if there is exactly one match."""
+    wanted = str(args.get("id") or args.get("message") or args.get("text") or "").strip()
+    if not wanted:
+        return {"error": "איזו תזכורת לבטל?"}
+    with _reminders_lock:
+        items = _load_reminders()
+        live = [r for r in items if not r.get("delivered")]
+        hits = [r for r in live if r["id"] == wanted]
+        if not hits:
+            hits = [r for r in live if wanted.lower() in r["message"].lower()]
+        if not hits:
+            return {"error": f'לא מצאתי תזכורת שמתאימה ל-"{wanted}"'}
+        if len(hits) > 1:
+            return {"error": f"{len(hits)} תזכורות מתאימות — תגיד לי איזו",
+                    "matches": [{"id": r["id"], "message": r["message"]} for r in hits]}
+        items = [r for r in items if r["id"] != hits[0]["id"]]
+        _save_reminders(items)
+    return {"cancelled": True, "message": hits[0]["message"]}
+
+
+def due_reminders(claim=True):
+    """Everything that has come due and nobody has delivered yet.
+
+    Claiming them is what stops two open windows both chiming for the same one.
+    """
+    now = time.time()
+    out = []
+    with _reminders_lock:
+        items = _load_reminders()
+        changed = False
+        for r in items:
+            if r.get("delivered") or r.get("due", 0) > now:
+                continue
+            late = now - r["due"]
+            out.append({
+                "id": r["id"],
+                "message": r["message"],
+                # Say so when it is late. A reminder arriving four hours after
+                # it was meant to is useful; one pretending to be on time isn't.
+                "late_seconds": int(late),
+                "late": _when(late) if late > 90 else "",
+            })
+            if claim:
+                r["delivered"] = True
+                changed = True
+        if changed:
+            _save_reminders(items)
+    return out
+
+
 def tool_volume(args):
     action = str(args.get("action", "")).lower().strip()
     if action not in VOLUME_KEYS:
@@ -852,6 +997,9 @@ TOOLS = {
     "get_last_project": tool_get_last_project,
     "resume_project": tool_resume_project,
     "list_projects": tool_list_projects,
+    "set_timer": tool_set_timer,
+    "list_reminders": tool_list_reminders,
+    "cancel_reminder": tool_cancel_reminder,
     "add_note": tool_add_note,
     "read_notes": tool_read_notes,
     "clear_notes": tool_clear_notes,
@@ -890,6 +1038,7 @@ TOOLS = {
 NEEDS_OK = {
     "clear_notes":     "למחוק את כל הפתקים",
     "forget_fact":     "למחוק משהו מהזיכרון ארוך הטווח",
+    "cancel_reminder": "לבטל תזכורת",
     "lock_computer":   "לנעול את המחשב",
     "free_gpu":        "לשחרר את הזיכרון של הכרטיס המסך",
     "mc_stop_server":  "לכבות את שרת המיינקראפט",
@@ -1155,6 +1304,11 @@ class Handler(SimpleHTTPRequestHandler):
                 "score": round(_wake_state["last_score"], 3),
                 "error": _wake_state["error"],
             })
+        if self.path == "/reminders":
+            # Whatever fell due while nobody was looking. Claiming them here is
+            # what makes the reminder survive a closed window: it stays waiting
+            # in the file until something actually takes it.
+            return self._send_json({"due": due_reminders(), "waiting": tool_list_reminders()["count"]})
         if self.path == "/orb":
             try:
                 length = int(self.headers.get("Content-Length", 0))

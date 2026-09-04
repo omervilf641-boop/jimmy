@@ -91,7 +91,9 @@ const TOOL_DEFS = [
   { type: "function", function: { name: "add_note", description: "שומר פתק לרשימת הפתקים של המשתמש", parameters: { type: "object", properties: { text: { type: "string", description: "תוכן הפתק" } }, required: ["text"] } } },
   { type: "function", function: { name: "read_notes", description: "מחזיר את הפתקים השמורים של המשתמש", parameters: { type: "object", properties: {}, required: [] } } },
   { type: "function", function: { name: "clear_notes", description: "מוחק את כל הפתקים — רק לבקשה מפורשת של המשתמש", parameters: { type: "object", properties: {}, required: [] } } },
-  { type: "function", function: { name: "set_timer", description: "קובע תזכורת שתישמע בעוד מספר דקות", parameters: { type: "object", properties: { minutes: { type: "number", description: "בעוד כמה דקות" }, message: { type: "string", description: "מה להזכיר" } }, required: ["minutes"] } } },
+  { type: "function", function: { name: "set_timer", description: "קובע תזכורת. היא נשמרת אצל השרת ותגיע גם אם החלון נסגר בינתיים", parameters: { type: "object", properties: { minutes: { type: "number", description: "בעוד כמה דקות" }, message: { type: "string", description: "מה להזכיר" } }, required: ["minutes"] } } },
+  { type: "function", function: { name: "list_reminders", description: "אילו תזכורות ממתינות ומתי כל אחת", parameters: { type: "object", properties: {}, required: [] } } },
+  { type: "function", function: { name: "cancel_reminder", description: "מבטל תזכורת ממתינה לפי המילים שבה", parameters: { type: "object", properties: { message: { type: "string", description: "המילים שבתזכורת, או המזהה שלה" } }, required: ["message"] } } },
   { type: "function", function: { name: "volume", description: "שולט בעוצמת השמע של המחשב", parameters: { type: "object", properties: { action: { type: "string", enum: ["up","down","mute","unmute"] }, steps: { type: "number", description: "כמה צעדים (ברירת מחדל 5)" } }, required: ["action"] } } },
   { type: "function", function: { name: "screenshot", description: "מצלם את המסך ושומר בתמונות", parameters: { type: "object", properties: {}, required: [] } } },
   { type: "function", function: { name: "lock_computer", description: "נועל את המחשב — רק לבקשה מפורשת של המשתמש", parameters: { type: "object", properties: {}, required: [] } } },
@@ -132,7 +134,7 @@ const TOOL_LABELS = {
   get_time: "🕐 בודק שעה", open_app: "🚀 פותח אפליקציה", open_url: "🌐 פותח אתר",
   search_web: "🔎 מחפש בגוגל", system_stats: "💻 בודק את המחשב",
   add_note: "📝 שומר פתק", read_notes: "📖 קורא פתקים", clear_notes: "🗑 מוחק פתקים",
-  set_timer: "⏰ קובע תזכורת", volume: "🔊 משנה עוצמה", screenshot: "📸 מצלם מסך",
+  set_timer: "⏰ קובע תזכורת", list_reminders: "⏰ בודק תזכורות", cancel_reminder: "⏰ מבטל תזכורת", volume: "🔊 משנה עוצמה", screenshot: "📸 מצלם מסך",
   lock_computer: "🔒 נועל את המחשב",
   mc_start_server: "🎮 מפעיל את המיינקראפט…", mc_stop_server: "🎮 סוגר את השרת",
   mc_autopilot: "🤖 מצב אוטונומי",
@@ -288,7 +290,7 @@ let mcInPlay = false;
 const CORE_TOOLS = new Set([
   "get_time", "open_app", "open_url", "search_web", "system_stats",
   "see_screen", "remember_fact", "recall_facts",
-  "add_note", "read_notes", "save_project", "resume_project", "set_timer",
+  "add_note", "read_notes", "save_project", "resume_project", "set_timer", "list_reminders",
 ]);
 
 // Summoned by the words that mean them. Deliberately generous — a false
@@ -453,17 +455,29 @@ function chime() {
   } catch {}
 }
 
-// timers run in the page so the reminder can chime and speak
-function runTimerTool(args) {
-  const mins = parseFloat(args.minutes);
-  if (!mins || mins <= 0) return { error: "משך לא תקין" };
-  const msg = (args.message || "").trim() || "הטיימר הסתיים";
-  setTimeout(() => {
+// Reminders are the server's now.
+//
+// This used to be a setTimeout, which meant closing the window threw the
+// reminder away without telling anyone: you could ask for one in an hour, be
+// told "fine", close the tab, and nothing would ever happen. The page still
+// does the chiming and the speaking, because that is what a page is for — but
+// it does it when it collects a reminder that has come due, not when a timer
+// it owns happens to fire.
+async function collectReminders() {
+  let data;
+  try {
+    const r = await fetch("/reminders", { method: "POST", headers: jarvisHeaders() });
+    if (!r.ok) return;
+    data = await r.json();
+  } catch { return; }                     // server asleep; try again next tick
+  for (const item of data.due || []) {
     chime();
-    addMsg("jarvis", "⏰ תזכורת: " + msg);
-    speak("תזכורת: " + msg);
-  }, mins * 60000);
-  return { timer_set: true, minutes: mins, message: msg };
+    // Say when it is late rather than pretending it arrived on time. A
+    // reminder four hours old is still useful; one that lies about it is not.
+    const tail = item.late ? ` (היה אמור להגיע ${item.late} קודם)` : "";
+    addMsg("jarvis", "⏰ תזכורת: " + item.message + tail);
+    speak("תזכורת: " + item.message);
+  }
 }
 
 // Models sometimes wrap the real arguments one level deeper, e.g.
@@ -509,7 +523,6 @@ async function askForKey() {
  */
 async function runTool(name, rawArgs) {
   const args = unwrapArgs(rawArgs);
-  if (name === "set_timer") return runTimerTool(args);
 
   const post = (extra) => fetch("/tool", {
     method: "POST",
@@ -1405,3 +1418,10 @@ async function loadMcpTools() {
   } catch { /* MCP is optional; Jarvis works fine without it */ }
 }
 loadMcpTools();
+
+// Anything that fell due while this window was shut is waiting, so ask once on
+// the way in — that is the whole reason the reminder lives on the server — and
+// then every fifteen seconds, which is close enough for something measured in
+// minutes and cheap enough not to think about.
+collectReminders();
+setInterval(collectReminders, 15000);
