@@ -208,6 +208,53 @@ let ollamaOnline = false;
 })();
 
 /* ---------- persistence ---------- */
+/**
+ * Keep the conversation from eating its own context window.
+ *
+ * Nothing ever came out of `history` — thirteen places pushed to it and only
+ * the per-turn recalled facts were ever removed, so it grew from the first
+ * message of a session until the "new chat" button was pressed, and every
+ * request carried all of it. Tool results are the expensive part: one mc_status
+ * reply measures about a hundred and fifteen tokens of JSON, and ten of them is
+ * more than a thousand tokens of stale inventory listings riding along behind
+ * every question asked afterwards.
+ *
+ * What survives is what a person would remember of a conversation: the recent
+ * exchanges exactly as they happened, and the older ones as what was said
+ * rather than the machinery underneath. The system prompt is never touched.
+ */
+const KEEP_VERBATIM = 10;      // messages at the end that stay exactly as they are
+const KEEP_TOTAL = 40;         // hard ceiling, oldest dropped first
+
+function trimHistory() {
+  if (history.length <= 1) return;
+  const head = history[0];
+  const rest = history.slice(1);
+  const recentFrom = Math.max(0, rest.length - KEEP_VERBATIM);
+
+  let out = [];
+  rest.forEach((msg, i) => {
+    if (i >= recentFrom) { out.push(msg); return; }   // recent — untouched
+    if (msg.role === "tool") return;                  // old machinery — gone
+    let m = msg;
+    if (m.tool_calls) {
+      const { tool_calls, ...bare } = m;              // the request, without the ask
+      m = bare;
+    }
+    // A turn that was only ever a tool call now says nothing, and an empty
+    // assistant message reads to the model as a refusal.
+    if (m.role === "assistant" && !String(m.content || "").trim()) return;
+    out.push(m);
+  });
+
+  if (out.length > KEEP_TOTAL) out = out.slice(out.length - KEEP_TOTAL);
+  // Never open on a leftover tool result: it answers a question that is no
+  // longer in the conversation.
+  while (out.length && out[0].role === "tool") out.shift();
+
+  history = [head, ...out];
+}
+
 function saveHistory() {
   localStorage.setItem("jarvis-history", JSON.stringify(history.filter(m => m.role === "user" || (m.role === "assistant" && !m.tool_calls))));
 }
@@ -764,6 +811,7 @@ async function send(text) {
       const at = history.indexOf(recalled);
       if (at >= 0) history.splice(at, 1);
     }
+    trimHistory();
     for (const el of chatEl.querySelectorAll(".msg.typing")) el.classList.remove("typing");
     if (!window.speechSynthesis.speaking && !currentVoiceSource) setOrb("", "");
     if (!trace.reply) trace.reply = bubble.textContent || "";

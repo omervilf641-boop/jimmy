@@ -51,6 +51,25 @@ function loadPicker() {
     "\nreturn { toolsFor, promptFor: systemPromptFor };")();
 }
 
+function loadTrim() {
+  const body = slice("const KEEP_VERBATIM", "\nfunction saveHistory()", "trimHistory");
+  return new Function("history", body + "\ntrimHistory();\nreturn history;");
+}
+
+/** A session with real shape: twenty turns, each with a fat tool result in it. */
+function longConversation(turns) {
+  const fat = JSON.stringify({ connected: true, goal: "mining",
+    inventory: Array(10).fill("cobblestone x64") });
+  const h = [{ role: "system", content: "PROMPT" }];
+  for (let t = 0; t < turns; t++) {
+    h.push({ role: "user", content: "q" + t });
+    h.push({ role: "assistant", content: "", tool_calls: [{ function: { name: "mc_status" } }] });
+    h.push({ role: "tool", tool_name: "mc_status", content: fat });
+    h.push({ role: "assistant", content: "a" + t });
+  }
+  return h;
+}
+
 function loadSummarise() {
   const body = slice("function summarise(result) {", "\nfunction chime()", "summarise");
   return new Function(body + "\nreturn { summarise };")();
@@ -153,6 +172,52 @@ async function main() {
       (m) => typeof m.content === "string" && m.content.includes("did NOT succeed"));
     if (told.length) throw new Error("warned about a tool that worked");
     return "quiet";
+  });
+
+  console.log("\nthe conversation does not grow forever");
+
+  await check("a long session is cut down, not carried whole", () => {
+    const before = longConversation(20);
+    const beforeChars = JSON.stringify(before).length;
+    const after = loadTrim()(before);
+    const afterChars = JSON.stringify(after).length;
+    if (afterChars >= beforeChars * 0.6) {
+      throw new Error("only " + Math.round(100 - afterChars / beforeChars * 100) + "% smaller");
+    }
+    return beforeChars + " -> " + afterChars + " chars";
+  });
+
+  await check("the system prompt is never touched", () => {
+    const after = loadTrim()(longConversation(20));
+    if (after[0].role !== "system" || after[0].content !== "PROMPT") {
+      throw new Error("lost the system prompt");
+    }
+    return "intact";
+  });
+
+  await check("the newest exchange survives verbatim", () => {
+    const after = loadTrim()(longConversation(20));
+    if (after[after.length - 1].content !== "a19") {
+      throw new Error("last reply was " + after[after.length - 1].content);
+    }
+    if (!after.some((m) => m.role === "tool")) throw new Error("every tool result was dropped");
+    return "kept";
+  });
+
+  await check("it never opens on an orphaned tool result", () => {
+    const after = loadTrim()(longConversation(60));
+    if (after[1] && after[1].role === "tool") throw new Error("starts on a tool result");
+    if (after.length > 42) throw new Error("over the ceiling: " + after.length);
+    return after.length + " messages";
+  });
+
+  await check("a short conversation is left alone", () => {
+    const short = longConversation(2);
+    const before = JSON.stringify(short);
+    if (JSON.stringify(loadTrim()(short)) !== before) {
+      throw new Error("trimmed something it should not have");
+    }
+    return "untouched";
   });
 
   console.log("\nthe tool loop");
