@@ -797,8 +797,11 @@ function pickVoice() {
 function updateVoiceWarning() {
   const voices = window.speechSynthesis.getVoices();
   if (!voices.length) return; // not loaded yet
-  if (pickVoice() || lang !== "he") { voiceWarning.style.display = "none"; return; }
-  voiceWarning.innerHTML = "⚠️ לא מותקן קול עברי בדפדפן הזה — התשובות יישמעו באנגלית. <b>פתרון מהיר:</b> פתח את הדף ב-<b>Microsoft Edge</b>, או חזור למצב English.";
+  // Only about the fallback now. Piper speaks Hebrew itself, so this banner is
+  // for the case where Piper is down and the browser has to take over — which
+  // is when the missing browser voice actually matters.
+  if (ttsAvailable || pickVoice() || lang !== "he") { voiceWarning.style.display = "none"; return; }
+  voiceWarning.innerHTML = "⚠️ הקול המקומי לא זמין כרגע, ולדפדפן הזה אין קול עברי. <b>פתרון מהיר:</b> ודא שהשרת של ג'רוויס רץ, או פתח את הדף ב-<b>Microsoft Edge</b>.";
   voiceWarning.style.display = "block";
 }
 function cleanForSpeech(text) {
@@ -831,7 +834,11 @@ async function speak(text) {
   setOrb("speaking", lang === "he" ? "ג'רוויס מדבר…" : "Jarvis is speaking…");
 
   // Hebrew has no Piper model installed, so it still goes through the browser.
-  if (ttsAvailable && lang !== "he") {
+  // Hebrew used to be excluded here, which is why the assistant did not speak
+  // its user's first language: it fell through to the browser, and the browser
+  // on this machine has two voices and both are en-US. There is a Hebrew Piper
+  // model now, so the only question left is whether Piper is up at all.
+  if (ttsAvailable) {
     try {
       await speakWithPiper(clean);
       setOrb("", "");

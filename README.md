@@ -165,7 +165,14 @@ Remember that I study at high school and I prefer everything to run locally
 set JARVIS_VOICE=en_GB-northern_english_male-medium
 ```
 
-> בעברית אין עדיין מודל מותקן, ולכן מצב עברית עדיין משתמש בקול של Windows.
+**עברית:** יש מודל עברי מותקן — `he_IL-saspeech-medium` — והוא נבחר אוטומטית לפי שפת השיחה.
+לשנות אותו: `set JARVIS_VOICE_HE=...`
+
+> את המודלים עצמם (`voices/*.onnx`, כ-60MB כל אחד) לא שומרים בגיט. להוריד מחדש:
+> ```bash
+> curl -L -o voices/he_IL-saspeech-medium.onnx      https://huggingface.co/rhasspy/piper-voices/resolve/main/he/he_IL/saspeech/medium/he_IL-saspeech-medium.onnx
+> curl -L -o voices/he_IL-saspeech-medium.onnx.json https://huggingface.co/rhasspy/piper-voices/resolve/main/he/he_IL/saspeech/medium/he_IL-saspeech-medium.onnx.json
+> ```
 
 ## שפה: אנגלית או עברית
 

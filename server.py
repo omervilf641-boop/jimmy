@@ -120,32 +120,52 @@ def tool_system_stats(_args):
 
 VOICES_DIR = os.path.join(BASE_DIR, "voices")
 VOICE_MODEL = os.environ.get("JARVIS_VOICE", "en_GB-alan-medium")
+VOICE_MODEL_HE = os.environ.get("JARVIS_VOICE_HE", "he_IL-saspeech-medium")
 
-_voice = None
+# One voice per language, and the assistant answers in two.
+#
+# Until now there was exactly one model, an English one, and the page skipped
+# Piper entirely whenever the conversation was in Hebrew — so Hebrew fell
+# through to the browser's own speech synthesis. On this machine that is two
+# installed voices, both en-US, which means the assistant did not actually
+# speak its user's first language at all. It apologised for it in a banner
+# instead.
+_voices = {}
 _voice_lock = threading.Lock()
 
 
-def get_voice():
-    """Load the neural voice once. Windows' built-in SAPI voices sound like a
-    2005 satnav; this is a local Piper model, no cloud involved."""
-    global _voice
+def voice_model_for(lang):
+    return VOICE_MODEL_HE if str(lang or "").startswith("he") else VOICE_MODEL
+
+
+def get_voice(lang=None):
+    """Load a neural voice once per language and keep it. Windows' built-in SAPI
+    voices sound like a 2005 satnav; these are local Piper models, no cloud."""
+    name = voice_model_for(lang)
+    path = os.path.join(VOICES_DIR, name + ".onnx")
+    if not os.path.exists(path):
+        # Missing the Hebrew model is a reason to sound English, not to go
+        # silent — but say so once rather than failing the request.
+        fallback = os.path.join(VOICES_DIR, VOICE_MODEL + ".onnx")
+        if name != VOICE_MODEL and os.path.exists(fallback):
+            print(f"[tts] no {name}, falling back to {VOICE_MODEL}", flush=True)
+            name, path = VOICE_MODEL, fallback
+        else:
+            raise FileNotFoundError(f"missing voice model: {path}")
     with _voice_lock:
-        if _voice is None:
+        if name not in _voices:
             from piper import PiperVoice
-            path = os.path.join(VOICES_DIR, VOICE_MODEL + ".onnx")
-            if not os.path.exists(path):
-                raise FileNotFoundError(f"missing voice model: {path}")
-            _voice = PiperVoice.load(path)
-    return _voice
+            _voices[name] = PiperVoice.load(path)
+    return _voices[name]
 
 
-def synthesize(text):
-    """Return WAV bytes for the given text."""
+def synthesize(text, lang=None):
+    """Return WAV bytes for the given text, in the voice that fits the language."""
     import io as _io
     import wave
     buf = _io.BytesIO()
     with wave.open(buf, "wb") as wav:
-        get_voice().synthesize_wav(text, wav)
+        get_voice(lang).synthesize_wav(text, wav)
     return buf.getvalue()
 
 
@@ -1506,7 +1526,7 @@ class Handler(SimpleHTTPRequestHandler):
             text = str(body.get("text", "")).strip()
             if not text:
                 return self._send_json({"error": "no text"}, 400)
-            audio = synthesize(text[:1200])
+            audio = synthesize(text[:1200], body.get("lang"))
             self.send_response(200)
             self.send_header("Content-Type", "audio/wav")
             self.send_header("Content-Length", str(len(audio)))
