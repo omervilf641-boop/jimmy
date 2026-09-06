@@ -680,7 +680,21 @@ async function send(text) {
     const alreadyAsked = new Map();
     let ranOutOfRounds = true;
 
-    while (rounds++ < 4) {
+    // Count the wasted rounds, not the rounds.
+    //
+    // Four was a hard ceiling on everything, and a request that honestly needs
+    // three tools in sequence — look at the screen, save it as a note, set a
+    // reminder — came within one of hitting it and being told "I got stuck".
+    // But raising the number alone just buys a longer spin when the model is
+    // grinding, which is the thing the cap was there to stop.
+    //
+    // So the ceiling goes up and a second limit goes in underneath it: a round
+    // that ran no tool it had not already run is not progress. Two of those in
+    // a row and it is not going to get there, whatever the number says.
+    const MAX_ROUNDS = 8;
+    let wasted = 0;
+
+    while (rounds++ < MAX_ROUNDS) {
       let { content, toolCalls } = await chatOnce(bubble);
       if (toolCalls.length === 0) {
         // Caught claiming an action it never performed — the same failure the
@@ -706,6 +720,7 @@ async function send(text) {
       const assistantMsg = { role: "assistant", content };
       if (supportsTools) assistantMsg.tool_calls = toolCalls;
       history.push(assistantMsg);
+      let ranSomethingNew = false;
       for (const tc of toolCalls) {
         const fname = tc.function?.name || "?";
         let fargs = tc.function?.arguments || {};
@@ -723,6 +738,7 @@ async function send(text) {
           });
           continue;
         }
+        ranSomethingNew = true;
 
         if (fname.startsWith("mc_")) mcInPlay = true;
         const note = addMsg("tool-note", (TOOL_LABELS[fname] || "⚙ " + fname) + "…");
@@ -779,6 +795,10 @@ async function send(text) {
       } else {
         bubble = addMsg("jarvis", "…");
       }
+      // Everything this round had already been asked and answered. Once is a
+      // stumble; twice is a model going round in circles with the answer
+      // already in front of it.
+      if (!ranSomethingNew && ++wasted >= 2) break;
       setOrb("thinking", "ג'רוויס מעבד את התוצאה…");
     }
 

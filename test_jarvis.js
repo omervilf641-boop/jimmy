@@ -75,7 +75,7 @@ function loadSummarise() {
   return new Function(body + "\nreturn { summarise };")();
 }
 
-function runLoop({ stubborn, failing }) {
+function runLoop({ stubborn, failing, sequence }) {
   const body = slice("    let rounds = 0;", "  } catch (e) {", "the tool loop");
   const summariser = slice("function summarise(result) {", "\nfunction chime()", "summarise");
   const ran = [];
@@ -94,6 +94,12 @@ function runLoop({ stubborn, failing }) {
     runTool: async (n) => { ran.push(n); return failing ? { error: "לא הצלחתי" } : { ok: true }; },
     chatOnce: async () => {
       call++;
+      // A model working through a real multi-step request: a different tool
+      // each round, then an answer.
+      if (sequence) {
+        if (call > sequence.length) return { content: "done.", toolCalls: [] };
+        return { content: "", toolCalls: [{ function: { name: sequence[call - 1], arguments: {} } }] };
+      }
       if (!stubborn && call > 2) return { content: "done.", toolCalls: [] };
       return { content: "", toolCalls: [{ function: { name: "list_allowed_directories", arguments: {} } }] };
     },
@@ -218,6 +224,27 @@ async function main() {
       throw new Error("trimmed something it should not have");
     }
     return "untouched";
+  });
+
+  console.log("\nrounds");
+
+  await check("a request needing several different tools gets to run them", async () => {
+    const out = await runLoop({ sequence: ["see_screen", "add_note", "set_timer", "system_stats", "get_time"] });
+    if (out.ran.length !== 5) throw new Error("only ran " + out.ran.join(", "));
+    // The shared stub the harness uses for every message means the last tool
+    // line overwrites the bubble, so the text is not the thing to assert on.
+    // What matters is that it was never cut off for running out of turns.
+    if (/נתקעתי|stuck/.test(out.shown)) throw new Error("hit the ceiling: " + out.shown);
+    return out.ran.length + " tools in sequence, no ceiling";
+  });
+
+  await check("but a model going in circles is cut off early", async () => {
+    const out = await runLoop({ stubborn: true });
+    // The same call every round: the loop should give up on the wasted rounds
+    // long before the eight-round ceiling.
+    if (out.ran.length !== 1) throw new Error("ran the same tool " + out.ran.length + " times");
+    if (!/נתקעתי|stuck/.test(out.shown)) throw new Error("said: " + out.shown);
+    return "stopped and said so";
   });
 
   console.log("\nthe tool loop");
