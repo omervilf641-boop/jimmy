@@ -1492,6 +1492,13 @@ class Handler(SimpleHTTPRequestHandler):
                 "score": round(_wake_state["last_score"], 3),
                 "error": _wake_state["error"],
             })
+        if self.path == "/lan":
+            # So the app can show the phone address instead of it living only in
+            # a console line printed at startup that nobody ever sees.
+            return self._send_json({
+                "lan": LAN, "ip": local_ip() if LAN else None,
+                "port": PORT, "key": LAN_KEY if LAN else None,
+            })
         if self.path == "/notices":
             if not WATCH:
                 return self._send_json({"due": [], "watching": False})

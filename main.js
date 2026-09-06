@@ -8,7 +8,7 @@
  * The Python tool server (server.py) runs as a child process — it owns all the
  * PC actions (apps, notes, timers, Minecraft bridge) and keeps working unchanged.
  */
-const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, shell, nativeImage, screen, clipboard, Notification } = require("electron");
+const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, shell, nativeImage, screen, clipboard, Notification , dialog } = require("electron");
 const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
@@ -90,7 +90,15 @@ function startToolServer() {
   if (!fs.existsSync(script)) return;
   for (const cmd of ["python", "py", "python3"]) {
     try {
-      toolServer = spawn(cmd, [script], { cwd: path.dirname(script), windowsHide: true });
+      // Pass the environment through, which is what makes the phone reachable.
+      //
+      // server.py binds 127.0.0.1 unless JARVIS_LAN=1, and the app spawned it
+      // with a bare environment — so the whole phone-as-a-second-screen feature
+      // was written, tested and then unreachable from the program people
+      // actually run. Starting the app with JARVIS_LAN=1 now does what it says.
+      toolServer = spawn(cmd, [script], {
+        cwd: path.dirname(script), windowsHide: true, env: { ...process.env },
+      });
       toolServer.on("error", () => { toolServer = null; });
       return;
     } catch { /* try the next interpreter */ }
@@ -389,8 +397,71 @@ function buildTrayMenu() {
       click: (i) => app.setLoginItemSettings({ openAtLogin: i.checked, args: ["--hidden"] }),
     },
     { type: "separator" },
+    { label: "Reach Jarvis from my phone…", click: showPhoneDetails },
+    { type: "separator" },
     { label: "Quit", click: () => { app.isQuitting = true; app.quit(); } },
   ]);
+}
+
+/**
+ * The address and key to type into a phone, or why there isn't one.
+ *
+ * These are printed once to a console nobody sees when the app launches the
+ * server itself. Asking the server for them means the answer is always the
+ * running truth rather than something remembered from a previous session.
+ */
+async function showPhoneDetails() {
+  let info = null;
+  try {
+    info = await new Promise((resolve, reject) => {
+      const req = http.get({ host: "127.0.0.1", port: TOOL_PORT, path: "/lan", timeout: 3000 },
+        (res) => {
+          let body = "";
+          res.on("data", (c) => (body += c));
+          res.on("end", () => { try { resolve(JSON.parse(body)); } catch (e) { reject(e); } });
+        });
+      req.on("error", reject);
+      req.on("timeout", () => { req.destroy(); reject(new Error("timeout")); });
+    });
+  } catch { /* fall through to the "it is off" message */ }
+
+  if (info && info.lan) {
+    const url = "http://" + info.ip + ":" + info.port;
+    dialog.showMessageBox({
+      type: "info",
+      title: "Jarvis on your phone",
+      message: "פתח את הכתובת הזאת בטלפון:",
+      detail: [
+        url,
+        "",
+        "מפתח גישה:  " + info.key,
+        "",
+        "הטלפון צריך להיות על אותה רשת WiFi.",
+        "את המפתח מדביקים פעם אחת והוא נשמר.",
+      ].join("\n"),
+      buttons: ["העתק כתובת", "סגור"],
+      defaultId: 0, cancelId: 1,
+    }).then((r) => { if (r.response === 0) clipboard.writeText(url); });
+    return;
+  }
+
+  dialog.showMessageBox({
+    type: "info",
+    title: "Jarvis on your phone",
+    message: "הגישה מהטלפון כבויה כרגע.",
+    detail: [
+      "ג'רוויס מקשיב רק למחשב הזה, וזו ברירת המחדל בכוונה — מצב רשת",
+      "פותח את שרת הכלים לכל מי שעל אותה WiFi, גם עם מפתח.",
+      "",
+      "להדלקה — סגור את ג'רוויס והפעל כך:",
+      "",
+      "    set JARVIS_LAN=1",
+      "    npm start",
+      "",
+      "ואז חזור לתפריט הזה — תהיה כאן כתובת ומפתח.",
+    ].join("\n"),
+    buttons: ["סגור"],
+  });
 }
 
 function showAndListen(listen) {
