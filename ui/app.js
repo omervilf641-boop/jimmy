@@ -574,7 +574,7 @@ async function collectReminders() {
     chime();
     // Say when it is late rather than pretending it arrived on time. A
     // reminder four hours old is still useful; one that lies about it is not.
-    const tail = item.late ? ` (היה אמור להגיע ${item.late} קודם)` : "";
+    const tail = item.late ? ` (באיחור של ${item.late})` : "";
     addMsg("jarvis", "⏰ תזכורת: " + item.message + tail);
     speak("תזכורת: " + item.message);
   }

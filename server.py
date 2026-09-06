@@ -697,18 +697,36 @@ def _save_reminders(items):
     os.replace(tmp, REMINDERS_FILE)      # never leave a half-written file
 
 
-def _when(seconds_away):
-    """How a person would say it, rather than a timestamp."""
-    m = int(round(seconds_away / 60.0))
+def _howlong(seconds):
+    """A bare duration: "45 דקות", "שעתיים", "3 ימים".
+
+    It used to come back with "עוד" already glued to the front, which reads
+    correctly for something due later and not at all for something overdue — a
+    reminder that had waited two days announced itself as "was supposed to
+    arrive in 2 days ago". Whether it is ahead or behind is the caller's to say.
+    """
+    m = int(round(abs(seconds) / 60.0))
     if m < 1:
-        return "עוד פחות מדקה"
+        return "פחות מדקה"
+    if m == 1:
+        return "דקה"
     if m < 60:
-        return f"עוד {m} דקות" if m > 1 else "עוד דקה"
+        return f"{m} דקות"
     h, rem = divmod(m, 60)
     if h < 24:
-        return f"עוד {h} שעות" + (f" ו-{rem} דקות" if rem else "")
+        head = "שעה" if h == 1 else ("שעתיים" if h == 2 else f"{h} שעות")
+        return head + (f" ו-{rem} דקות" if rem else "")
     d = h // 24
-    return f"עוד {d} ימים" if d > 1 else "מחר"
+    return "יום" if d == 1 else ("יומיים" if d == 2 else f"{d} ימים")
+
+
+def _when(seconds_away):
+    """When something is due, said the way a person would."""
+    if seconds_away < 60:
+        return "עוד פחות מדקה"
+    if seconds_away >= 86400 and seconds_away < 172800:
+        return "מחר"
+    return "עוד " + _howlong(seconds_away)
 
 
 def tool_set_timer(args):
@@ -754,7 +772,8 @@ def tool_list_reminders(_args=None):
         "reminders": [{
             "id": r["id"],
             "message": r["message"],
-            "when": _when(r["due"] - now) if r["due"] > now else "כבר עבר הזמן",
+            "when": _when(r["due"] - now) if r["due"] > now
+                    else f"היה אמור להגיע לפני {_howlong(now - r['due'])}",
         } for r in items],
     }
 
@@ -800,7 +819,7 @@ def due_reminders(claim=True):
                 # Say so when it is late. A reminder arriving four hours after
                 # it was meant to is useful; one pretending to be on time isn't.
                 "late_seconds": int(late),
-                "late": _when(late) if late > 90 else "",
+                "late": _howlong(late) if late > 90 else "",
             })
             if claim:
                 r["delivered"] = True
