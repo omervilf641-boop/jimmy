@@ -97,7 +97,11 @@ function startToolServer() {
   }
 }
 
-function waitForServer(tries = 40) {
+// Forty quarter-seconds was ten seconds, and a cold start does not fit in it.
+// Measured on this machine: 5.1s warm, 12s the first time after a reboot, with
+// Python not yet in the file cache and the MCP server spawning alongside. The
+// window opened on nothing and stayed that way.
+function waitForServer(tries = 120) {
   return new Promise((resolve) => {
     const attempt = (left) => {
       const req = http.get({ host: "127.0.0.1", port: TOOL_PORT, path: "/", timeout: 500 }, (res) => {
@@ -110,8 +114,43 @@ function waitForServer(tries = 40) {
   });
 }
 
+/**
+ * The screen to show instead of a black rectangle.
+ *
+ * Written inline rather than as a file because the whole problem is that we
+ * could not load a file from the server, and a fallback that needs the thing
+ * that is broken is not a fallback.
+ */
+function showStartupTrouble(reason) {
+  if (!win || win.isDestroyed()) return;
+  const page = `<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8">
+  <style>
+    body { margin:0; height:100vh; display:flex; align-items:center; justify-content:center;
+           background:#04070d; color:#cfe6ee;
+           font-family: "Segoe UI", system-ui, sans-serif; }
+    .box { max-width: 30rem; padding: 0 1.6rem; line-height: 1.65; }
+    h1 { font-size: 1.15rem; margin: 0 0 .7rem; color:#4ff0ae; letter-spacing:.04em; }
+    p { margin: 0 0 .8rem; color:#8ea6b4; font-size:.92rem; }
+    code { background:#0d1620; padding:.15rem .45rem; border-radius:3px; color:#cfe6ee;
+           direction:ltr; display:inline-block; font-size:.86rem; }
+    button { margin-top:.6rem; font:inherit; font-size:.9rem; color:#04070d; background:#4ff0ae;
+             border:0; border-radius:4px; padding:.55rem 1.1rem; cursor:pointer; }
+    .why { color:#5c6f7c; font-size:.8rem; margin-top:1.2rem; }
+  </style></head><body><div class="box">
+    <h1>ג'רוויס לא הצליח לעלות</h1>
+    <p>שרת הכלים לא ענה, אז אין מה להציג. זה כמעט תמיד אחד משניים:
+       פייתון לא מותקן או לא ב־PATH, או שמשהו אחר כבר תופס את הפורט 8123.</p>
+    <p>לבדוק מהטרמינל, מתוך תיקיית הפרויקט:</p>
+    <p><code>python server.py</code></p>
+    <p>מה שייכתב שם יגיד מה חסר. כשהוא רץ — לחץ כאן:</p>
+    <button onclick="location.href='http://127.0.0.1:8123/'">נסה שוב</button>
+    <p class="why">${String(reason || "").replace(/[<>&]/g, "")}</p>
+  </div></body></html>`;
+  win.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(page));
+}
+
 /* ---------------- window ---------------- */
-function createWindow() {
+function createWindow(serverUp = true) {
   win = new BrowserWindow({
     width: 480, height: 780,
     minWidth: 380, minHeight: 520,
@@ -128,6 +167,29 @@ function createWindow() {
 
   win.loadURL(`http://127.0.0.1:${TOOL_PORT}/`);
   win.once("ready-to-show", () => win.show());
+
+  // A window that fails to load must not just sit there being black.
+  //
+  // backgroundColor is #04070d, so a failed load is a near-black rectangle with
+  // nothing in it and no way to tell whether the app is starting, broken, or
+  // waiting for something. There was no handler here at all: one failed load
+  // and that was the session. Now it keeps trying, and if it really cannot
+  // reach the server it says so on the screen instead of implying it.
+  let reloads = 0;
+  win.webContents.on("did-fail-load", (_e, code, desc, url, isMainFrame) => {
+    if (!isMainFrame || code === -3) return;          // -3 is an aborted nav, not a failure
+    if (++reloads <= 20) {
+      setTimeout(() => { if (!win.isDestroyed()) win.loadURL(`http://127.0.0.1:${TOOL_PORT}/`); }, 1000);
+      return;
+    }
+    showStartupTrouble(desc);
+  });
+
+  if (serverUp === false) {
+    // waitForServer gave up before the window was even made. Say so now rather
+    // than leaving the retries to discover it silently.
+    setTimeout(() => { if (!win.isDestroyed() && reloads > 3) showStartupTrouble("the tool server did not come up"); }, 8000);
+  }
 
   if (process.argv.includes("--selftest")) {
     win.webContents.on("console-message", (_e, _lvl, msg) => console.log("[renderer]", msg));
@@ -347,8 +409,8 @@ if (!singleInstance) {
 
   app.whenReady().then(async () => {
     startToolServer();
-    await waitForServer();
-    createWindow();
+    const serverUp = await waitForServer();
+    createWindow(serverUp);
 
     tray = new Tray(makeIcon(32));
     tray.setToolTip("Jarvis");
