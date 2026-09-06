@@ -401,6 +401,24 @@ function showAndListen(listen) {
 }
 
 /* ---------------- lifecycle ---------------- */
+// A window that draws everything and shows nothing.
+//
+// Electron hands the finished frame to Windows through the GPU compositor, and
+// when that link is broken — a driver update is the usual cause — the window
+// presents as a flat rectangle of backgroundColor while the renderer is happily
+// drawing the whole interface behind it. Diagnosed exactly that way here:
+// capturePage() came back with the HUD in it and fifty distinct colours, while
+// the screen showed nothing at all.
+//
+// Software compositing costs this app nothing worth measuring — it is a small
+// HUD with a CSS-animated ring, not a game — so the switch is cheap insurance.
+// It has to be thrown before the app is ready, which is why it cannot be
+// decided from getGPUFeatureStatus(): by the time that answers, it is too late.
+if (process.argv.includes("--no-gpu") || process.env.JARVIS_NO_GPU === "1") {
+  app.disableHardwareAcceleration();
+  console.log("[jarvis] hardware acceleration off");
+}
+
 const singleInstance = app.requestSingleInstanceLock();
 if (!singleInstance) {
   app.quit();

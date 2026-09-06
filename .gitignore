@@ -25,3 +25,5 @@ projects.json
 
 # Scratch output from orb_stub.py
 orb_out.txt
+diagnose-report.txt
+diagnose-window.png
