@@ -22,8 +22,11 @@
     ],
     "extraResources": [
       {
-        "from": "server.py",
-        "to": "server.py"
+        "from": ".",
+        "to": ".",
+        "filter": [
+          "*.py"
+        ]
       },
       {
         "from": "type_text.ps1",
