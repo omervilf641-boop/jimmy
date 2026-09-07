@@ -112,21 +112,23 @@ function runLoop({ stubborn, failing, sequence }) {
 async function main() {
   console.log("\nthe tool picker");
 
-  await check("sixteen by default, and no Minecraft among them", () => {
+  await check("eighteen by default, and no Minecraft among them", () => {
     const got = loadPicker().toolsFor("Jarvis.");
-    // Thirteen, plus the three that arrived with reminders and the watcher:
-    // list_reminders, watch_status and watch_log. The rest of each of those
-    // groups is destructive or a settings change and waits to be asked for.
-    if (got.length !== 16) throw new Error(`expected 16, got ${got.length}`);
+    // Thirteen, plus three from reminders and the watcher (list_reminders,
+    // watch_status, watch_log), plus two for games (open_game, list_games).
+    // The rest of each group is destructive or a settings change and waits to
+    // be asked for. open_game is not gated because it can only start something
+    // already installed — the list it draws from is discovered, not arbitrary.
+    if (got.length !== 18) throw new Error(`expected 18, got ${got.length}`);
     if (got.some((t) => t.function.name.startsWith("mc_"))) throw new Error("Minecraft leaked");
-    return "16 sent";
+    return "18 sent";
   });
 
   await check("asking about the bot brings the whole Minecraft block", () => {
     const got = loadPicker().toolsFor("send the minecraft bot to mine iron");
-    if (got.length !== 26) throw new Error(`expected 26, got ${got.length}`);
+    if (got.length !== 28) throw new Error(`expected 28, got ${got.length}`);
     if (!got.some((t) => t.function.name === "mc_do")) throw new Error("mc_do missing");
-    return "26 sent";
+    return "28 sent";
   });
 
   await check("a word summons the tool it means, and only then", () => {

@@ -83,6 +83,46 @@ def tool_open_app(args):
     return {"opened": name}
 
 
+def tool_open_game(args):
+    """Start a game, by whatever name the person actually calls it.
+
+    Deliberately not behind the confirmation gate, and the reason is the shape
+    of the tool rather than how harmless it feels. open_app takes a name from a
+    fixed list of programs; this one can only launch something that was found
+    installed, so the worst a confused model can do is start a game that is
+    already on the machine — visible immediately and closed by closing it. The
+    gate is for things that delete, change a setting, or reach outside.
+    """
+    import games
+    wanted = str(args.get("game") or args.get("name") or "").strip()
+    if not wanted:
+        return {"error": "איזה משחק?", "available": [g["name"] for g in games.all_games()]}
+
+    hit, alternatives = games.find(wanted)
+    if hit:
+        games.launch(hit)
+        return {"opened": hit["name"], "via": hit["where"]}
+    if alternatives:
+        # Two things matched. Launching one of them would be a guess, and a
+        # guess that opens a window is worse than a question.
+        return {"error": f'התכוונת לאיזה מהם?', "matches": alternatives}
+    return {"error": f'לא מצאתי משחק בשם "{wanted}"',
+            "available": [g["name"] for g in games.all_games()]}
+
+
+def tool_list_games(_args=None):
+    """What is installed right now — read off the disk, not remembered."""
+    import games
+    found = games.all_games(force=True)
+    if not found:
+        return {"count": 0, "message": "לא מצאתי משחקים או משגרים מותקנים"}
+    return {
+        "count": len(found),
+        "games": [g["name"] for g in found if g["where"] == "Steam"],
+        "launchers": [g["name"] for g in found if g["where"] == "launcher"],
+    }
+
+
 def tool_open_url(args):
     url = str(args.get("url", "")).strip()
     if not (url.startswith("http://") or url.startswith("https://")):
@@ -1168,6 +1208,8 @@ def tool_mc_skills(_args):
 TOOLS = {
     "get_time": tool_get_time,
     "open_app": tool_open_app,
+    "open_game": tool_open_game,
+    "list_games": tool_list_games,
     "open_url": tool_open_url,
     "search_web": tool_search_web,
     "system_stats": tool_system_stats,
