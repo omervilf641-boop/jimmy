@@ -1,12 +1,16 @@
 const OLLAMA = "http://localhost:11434";
 // qwen2.5 reliably emits tool calls; aya-expanse writes nicer Hebrew but returns
 // empty responses when tools are attached, so it can't drive the Minecraft bot.
-const MODEL = localStorage.getItem("jarvis-model") || "qwen2.5:7b";
+// Smaller than what came before, and faster because of it: this one fits
+// entirely in the 6GB card, where qwen2.5:7b left 18% of itself on the CPU
+// and generated 19 words a second against this model's 47. Measured on
+// Jarvis's own prompt and its own eighteen tools: tool choice 10/10 against
+// 5/10, clean Hebrew 5/5 against 1/5, median reply 0.6s against 3s.
+const MODEL = localStorage.getItem("jarvis-model") || "qwen3:4b-instruct-2507-q4_K_M";
 const SYSTEM_PROMPT_EN = `You are Jarvis, a smart personal assistant running locally on the user's Windows PC.
 Always answer in English, briefly and in a friendly tone. Your replies are read aloud, so write flowing text — no lists, no emoji, no Markdown.
-You have real tools on this computer. When you need a tool, output only a single-line JSON: {"name": "tool_name", "arguments": {...}} with no other text.
-Tools: get_time (date and time), open_app (arguments: {"app": one of notepad/calculator/paint/explorer/chrome/edge/settings/camera}), open_url ({"url": full address}), search_web ({"query": text}), system_stats (CPU, memory, battery, disk), add_note ({"text": the note}), read_notes, clear_notes (only on explicit request), set_timer ({"minutes": number, "message": what to remind}), volume ({"action": up/down/mute/unmute, "steps": number}), screenshot, lock_computer (only on explicit request).
 After a tool runs you get its result — then tell the user briefly what you did or found.
+You are not an encyclopedia. On questions about the world — history, science, figures, who invented what — if you are not certain, say plainly that you are not sure and offer to search, or call search_web. Saying you do not know beats inventing an answer that sounds confident. This does not apply to what you do on the computer itself — there, act.
 
 Eyes: you can see the user's screen with see_screen. Use it whenever they ask about something in front of them — "what is this error", "what does this say", "what am I looking at" — instead of guessing or asking them to paste text.
 
@@ -29,9 +33,8 @@ Skills are saved permanently and can be re-run by name with mc_run_skill. Use th
 
 const SYSTEM_PROMPT_HE = `אתה ג'רוויס, עוזר אישי חכם שרץ מקומית על מחשב Windows של המשתמש.
 ענה תמיד בעברית תקינה בלבד, בקצרה ובטון חברותי. לעולם אל תערבב שפות אחרות. התשובות מוקראות בקול — כתוב טקסט זורם, בלי רשימות, בלי אימוג'י ובלי Markdown.
-יש לך כלים אמיתיים על המחשב. כשצריך כלי, כתוב אך ורק JSON בשורה אחת בפורמט: {"name": "שם_הכלי", "arguments": {...}} בלי טקסט נוסף.
-הכלים: get_time (שעה ותאריך), open_app (פתיחת אפליקציה, arguments: {"app": אחד מ-notepad/calculator/paint/explorer/chrome/edge/settings/camera}), open_url (arguments: {"url": כתובת מלאה}), search_web (חיפוש בגוגל, arguments: {"query": טקסט}), system_stats (מצב המחשב: מעבד, זיכרון, סוללה, דיסק), add_note (שמירת פתק, arguments: {"text": הפתק}), read_notes (קריאת הפתקים), clear_notes (מחיקת כל הפתקים — רק אם המשתמש ביקש במפורש), set_timer (תזכורת, arguments: {"minutes": מספר, "message": מה להזכיר}), volume (עוצמת שמע, arguments: {"action": up/down/mute/unmute, "steps": מספר}), screenshot (צילום מסך), lock_computer (נעילת המחשב — רק אם המשתמש ביקש במפורש).
 אחרי שכלי רץ תקבל את התוצאה — ספר למשתמש בקצרה ובעברית מה עשית או מה גילית.
+אתה לא אנציקלופדיה. בשאלות ידע על העולם — היסטוריה, מדע, מספרים, מי המציא מה — אם אינך בטוח לגמרי, אמור בפשטות שאינך בטוח והצע לחפש, או קרא ל-search_web. עדיף להגיד שאינך יודע מאשר להמציא תשובה שנשמעת בטוחה. זה לא חל על מה שאתה עושה במחשב עצמו — שם פעל.
 
 עיניים: אתה יכול לראות את המסך של המשתמש עם see_screen. השתמש בזה כשהוא שואל על משהו שמולו — "מה השגיאה הזאת", "מה כתוב פה", "מה אני רואה" — במקום לנחש או לבקש ממנו להעתיק טקסט.
 
@@ -61,6 +64,26 @@ let lang = localStorage.getItem("jarvis-lang") || "en";
 // going along with it. A prompt that describes a tool the model has not been
 // given is an invitation to invent a call to it — which is the failure this
 // whole change exists to stop.
+/**
+ * The tool list in prose, for a model that cannot be handed tools properly.
+ *
+ * Ollama takes a tools parameter and every model Jarvis has run supports it,
+ * so this is dead weight in the normal case — and worse than dead weight,
+ * because a model reading a closed list of its own abilities starts answering
+ * questions about the world as though that list were the world. It goes in
+ * only once supportsTools has flipped off, and it is generated rather than
+ * typed, so the day someone adds a tool it cannot quietly start lying about
+ * what exists.
+ */
+function fallbackToolBlock(defs) {
+  const listed = defs
+    .map((t) => `${t.function.name} (${t.function.description})`)
+    .join(", ");
+  return lang === "he"
+    ? `\nיש לך כלים אמיתיים על המחשב. כשצריך כלי, כתוב אך ורק JSON בשורה אחת בפורמט: {"name": "שם_הכלי", "arguments": {...}} בלי טקסט נוסף.\nהכלים: ${listed}.`
+    : `\nYou have real tools on this computer. When you need a tool, output only a single-line JSON: {"name": "tool_name", "arguments": {...}} with no other text.\nTools: ${listed}.`;
+}
+
 function systemPromptFor(text) {
   const full = lang === "he" ? SYSTEM_PROMPT_HE : SYSTEM_PROMPT_EN;
   if (MC_WORDS.test(String(text || "")) || mcInPlay) return full;
@@ -70,12 +93,19 @@ function systemPromptFor(text) {
   return rest < 0 ? full.slice(0, cut).trim() : (full.slice(0, cut) + full.slice(rest + 2)).trim();
 }
 
+/** What actually reaches the model: this turn's prompt, plus the
+ *  prose tool list only when the tools parameter is not there to carry it. */
+function fullSystemPrompt(text) {
+  const base = systemPromptFor(text);
+  return supportsTools ? base : base + fallbackToolBlock(toolsFor(text));
+}
+
 const SYSTEM_PROMPT = lang === "he" ? SYSTEM_PROMPT_HE : SYSTEM_PROMPT_EN;
 const SPEECH_LANG = lang === "he" ? "he-IL" : "en-US";
 
 const TOOL_DEFS = [
   { type: "function", function: { name: "get_time", description: "מחזיר את התאריך, השעה והיום בשבוע הנוכחיים", parameters: { type: "object", properties: {}, required: [] } } },
-  { type: "function", function: { name: "open_app", description: "פותח אפליקציה במחשב", parameters: { type: "object", properties: { app: { type: "string", enum: ["notepad","calculator","paint","explorer","chrome","edge","settings","camera"], description: "האפליקציה לפתיחה" } }, required: ["app"] } } },
+  { type: "function", function: { name: "open_app", description: "פותח תוכנת מערכת של ווינדוס מתוך הרשימה הסגורה בלבד. לא למשחקים — למשחק השתמש ב-open_game. לא לאתרי אינטרנט — לאתר השתמש ב-open_url.", parameters: { type: "object", properties: { app: { type: "string", enum: ["notepad","calculator","paint","explorer","chrome","edge","settings","camera"], description: "האפליקציה לפתיחה" } }, required: ["app"] } } },
   { type: "function", function: { name: "open_url", description: "פותח כתובת אינטרנט בדפדפן", parameters: { type: "object", properties: { url: { type: "string", description: "כתובת מלאה כולל https://" } }, required: ["url"] } } },
   { type: "function", function: { name: "search_web", description: "מחפש בגוגל ופותח את תוצאות החיפוש בדפדפן", parameters: { type: "object", properties: { query: { type: "string", description: "מה לחפש" } }, required: ["query"] } } },
   { type: "function", function: { name: "system_stats", description: "מחזיר את מצב המחשב: עומס מעבד, זיכרון, סוללה ומקום פנוי בדיסק", parameters: { type: "object", properties: {}, required: [] } } },
@@ -175,9 +205,9 @@ let history = [{ role: "system", content: SYSTEM_PROMPT }];
 // rebuilding from them fixes both.
 let memoryBlock = "";
 let mcpBlock = "";
-function rebuildSystemPrompt() {
+function rebuildSystemPrompt(forText) {
   if (history[0] && history[0].role === "system") {
-    history[0].content = SYSTEM_PROMPT + mcpBlock + memoryBlock;
+    history[0].content = fullSystemPrompt(forText ?? lastUserText) + mcpBlock + memoryBlock;
   }
 }
 let busy = false;
@@ -466,7 +496,7 @@ let supportsTools = true; // flips off automatically if the model rejects the to
 async function chatOnce(bubble) {
   const payload = {
     model: MODEL, messages: history, stream: true,
-    keep_alive: "30m", options: { temperature: 0.6 },
+    keep_alive: "30m", options: { temperature: 0.15 },
   };
   if (supportsTools) payload.tools = toolsFor(lastUserText);
   let resp = await fetch(OLLAMA + "/api/chat", {
@@ -659,6 +689,10 @@ let lastUserText = "";
 async function send(text) {
   if (!text.trim() || busy) return;
   lastUserText = text;
+  // The prompt is rebuilt per message rather than per conversation: which
+  // paragraphs belong depends on what was just said, and that is not known
+  // any earlier than here.
+  rebuildSystemPrompt(text);
   busy = true;
   window.speechSynthesis.cancel(); stopVoice();
   addMsg("user", text);
