@@ -317,7 +317,7 @@ jimmy/
 python -m unittest discover -p "test_*.py"
 ```
 
-175 tests, no API key and no network required — the brain and the speaker are stubbed out,
+178 tests, no API key and no network required — the brain and the speaker are stubbed out,
 so every test exercises real behaviour deterministically. They cover persistence across
 restarts, schema migration from older memory files, corrupt-file recovery, duplicate
 handling, skill proficiency growth, forgetting, recall ranking, passive extraction (Hebrew

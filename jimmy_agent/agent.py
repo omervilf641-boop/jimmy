@@ -493,7 +493,10 @@ def _store_key(key: str) -> int:
     if ok is None:
         print(f"⚠️  {detail.capitalize()}.")
         return 0
-    print(f"❌ {detail.capitalize()}.")
+    # A rejected key is worse than none - it would fail on every message.
+    # The app does the same; the two paths must not disagree.
+    config.set_api_key("")
+    print(f"❌ {detail.capitalize()}, so it was not kept.")
     print("   Check it at https://console.anthropic.com/settings/keys")
     return 1
 

@@ -106,6 +106,63 @@ class TestSetKeyCommand(ConfigTestCase):
             self.assertEqual(_store_key("hunter2"), 1)
         self.assertIsNone(config.api_key(), "a bad key must not be saved")
 
+    def test_a_rejected_key_is_not_kept(self) -> None:
+        """The CLI and the app must agree: a key the API refuses is removed again."""
+        import jimmy_agent.agent as agent_module
+        from jimmy_agent.agent import _store_key
+
+        class RejectingBrain:
+            def verify(self):
+                return False, "the API rejected that key"
+
+        real_brain = agent_module.Brain
+        agent_module.Brain = RejectingBrain
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as captured:
+                self.assertEqual(_store_key("sk-ant-bogus-but-well-formed"), 1)
+        finally:
+            agent_module.Brain = real_brain
+
+        self.assertIn("not kept", captured.getvalue())
+        self.assertIsNone(config.api_key(), "the rejected key must not be left behind")
+
+    def test_an_accepted_key_is_kept(self) -> None:
+        import jimmy_agent.agent as agent_module
+        from jimmy_agent.agent import _store_key
+
+        class AcceptingBrain:
+            def verify(self):
+                return True, "connected to claude-opus-5"
+
+        real_brain = agent_module.Brain
+        agent_module.Brain = AcceptingBrain
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(_store_key("sk-ant-fine"), 0)
+        finally:
+            agent_module.Brain = real_brain
+
+        self.assertEqual(config.api_key(), "sk-ant-fine")
+
+    def test_an_unverifiable_key_is_kept_with_a_warning(self) -> None:
+        """No network is not the same as a bad key - don't throw it away."""
+        import jimmy_agent.agent as agent_module
+        from jimmy_agent.agent import _store_key
+
+        class OfflineBrain:
+            def verify(self):
+                return None, "couldn't reach the API to check - the key was saved anyway"
+
+        real_brain = agent_module.Brain
+        agent_module.Brain = OfflineBrain
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(_store_key("sk-ant-unverified"), 0)
+        finally:
+            agent_module.Brain = real_brain
+
+        self.assertEqual(config.api_key(), "sk-ant-unverified")
+
     def test_clearing_always_succeeds(self) -> None:
         from jimmy_agent.agent import _store_key
 
