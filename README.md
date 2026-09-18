@@ -18,6 +18,7 @@ He runs on **Claude** when credentials are available, and keeps working without 
 | 🌱 **Passive learning** | He picks up your name, job and preferences from normal conversation |
 | 🎓 **Skills that grow** | Proficiency rises each time a skill actually gets used |
 | 🧹 **Your memory, your rules** | `forget` anything, or wipe it all |
+| 🔊 **He talks** | Neural text-to-speech, Hebrew and English, picked to match your message |
 | 💤 **Offline mode** | No API key? He still remembers, learns and responds |
 | 🌍 **Bilingual** | Hebrew and English, commands included |
 
@@ -41,6 +42,8 @@ python jimmy.py                          # interactive chat
 python jimmy.py --ask "what do you know about me?"   # one question, then exit
 python jimmy.py --offline                # never call the API
 python jimmy.py --memory work.json       # keep separate memories
+python jimmy.py --voice                  # speak replies out loud
+python jimmy.py --voice --voice-name he-IL-HilaNeural
 ```
 
 ---
@@ -57,10 +60,13 @@ python jimmy.py --memory work.json       # keep separate memories
 | `progress` | The growth bar and current level |
 | `memory` | Everything Jimmy currently remembers |
 | `export [file]` | Write his memory out as readable Markdown |
+| `voice on` / `voice off` | Start or stop speaking replies out loud |
+| `voice <name>` | Switch voice, e.g. `voice he-IL-HilaNeural` |
+| `voices [prefix]` | List available voices, e.g. `voices he` |
 | `help` | The command list |
 | `exit` | End the session (everything is already saved) |
 
-Hebrew aliases: `למד` · `כישור` · `שכח` · `סטטיסטיקה` · `התקדמות` · `זיכרון` · `עזרה` · `יציאה`
+Hebrew aliases: `למד` · `כישור` · `שכח` · `סטטיסטיקה` · `התקדמות` · `זיכרון` · `קול` · `עזרה` · `יציאה`
 
 Anything that isn't a command is just conversation — and Jimmy learns from that too.
 
@@ -87,6 +93,34 @@ Levels: Beginner 🌱 → Growing 🌿 → Competent 🌳 → Expert 🌲
 
 ---
 
+## 🔊 Voice
+
+Jimmy can speak his replies. Turn it on with `--voice` at startup or `voice on` mid-chat.
+
+```bash
+pip install edge-tts          # the voices
+brew install ffmpeg           # or: apt install ffmpeg / mpv / mpg123
+python jimmy.py --voice
+```
+
+Voices come from **Microsoft Edge's neural TTS** — free, no API key, and genuinely good in
+both Hebrew and English. By default Jimmy picks the voice to match the language you wrote
+in: Hebrew gets `he-IL-AvriNeural`, everything else gets `en-US-AndrewMultilingualNeural`.
+Run `voices he` or `voices en-US` to see the live catalogue and `voice <name>` to switch.
+
+Backends are auto-detected in quality order — `edge-tts`, then `piper` if the binary is on
+PATH, then the system engine (`say` on macOS, `espeak-ng` / `spd-say` on Linux, SAPI on
+Windows). If none is available Jimmy tells you exactly what to install and stays silent.
+
+Speech runs on a background thread, so you can keep typing while he talks; your next message
+cuts him off. Emoji, markdown, box-drawing and URLs are stripped before speaking. **A voice
+failure never interrupts the conversation** — worst case he goes quiet and records why.
+
+If you are behind an HTTP proxy, set `HTTPS_PROXY` and Jimmy passes it through (the
+underlying HTTP client does not pick it up on its own).
+
+---
+
 ## 💤 Offline mode
 
 Without an `ANTHROPIC_API_KEY` (or without the `anthropic` package), Jimmy tells you so and
@@ -106,8 +140,10 @@ jimmy/
 ├── brain.py               # Claude API integration + offline fallback
 ├── learning_engine.py     # memory, facts, skills, recall, persistence
 ├── extractor.py           # passive learning from ordinary conversation
+├── voice.py               # text to speech, with layered backend fallback
 ├── test_jimmy.py          # memory, learning and end-to-end tests
 ├── test_brain_online.py   # online request shape and failure modes
+├── test_voice.py          # voice backends, cleanup and commands
 ├── PROMPT.md              # the build brief this project was built from
 ├── requirements.txt       # one dependency: anthropic
 └── memory.json            # created on first run — gitignored, it's yours
@@ -121,18 +157,22 @@ jimmy/
 python -m unittest discover -p "test_*.py"
 ```
 
-61 tests, no API key and no network required — the brain is stubbed out, so every test
-exercises real memory behaviour deterministically. They cover persistence across restarts,
-schema migration from older memory files, corrupt-file recovery, duplicate handling, skill
-proficiency growth, forgetting, recall ranking, passive extraction (Hebrew and English),
-offline replies, the exact request sent to the API, and every failure branch around it.
+95 tests, no API key and no network required — the brain and the speaker are both stubbed
+out, so every test exercises real behaviour deterministically. They cover persistence across
+restarts, schema migration from older memory files, corrupt-file recovery, duplicate
+handling, skill proficiency growth, forgetting, recall ranking, passive extraction (Hebrew
+and English), offline replies, the exact request sent to the API, voice backend selection,
+speech text cleanup, background speaking and interruption, and every failure branch around
+all of it.
 
 ---
 
 ## 🔒 Privacy
 
 `memory.json` holds your actual conversations. It is gitignored and never leaves your
-machine except as context in your own Claude API calls. `forget` and `export` are there so
+machine except as context in your own Claude API calls — and, when voice is on, the text of
+his replies is sent to Microsoft's TTS service to be spoken. Turn voice off and nothing
+goes there. `forget` and `export` are there so
 you stay in control of it.
 
 ---

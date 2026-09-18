@@ -1,3 +1,7 @@
-# Jimmy's only runtime dependency. Everything else is the standard library.
-# Without it (or without credentials) Jimmy runs in offline mode.
+# Jimmy's brain. Without it (or without credentials) he runs in offline mode.
 anthropic>=0.40.0
+
+# Jimmy's voice: Microsoft Edge's neural voices, free and no API key.
+# Optional - without it he simply stays silent and says so.
+# You also need an audio player on PATH: ffmpeg (ffplay), mpv or mpg123.
+edge-tts>=7.0.0

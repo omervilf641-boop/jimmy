@@ -15,6 +15,7 @@ from typing import Callable, Dict, List, Optional
 from brain import Brain
 from extractor import extract
 from learning_engine import LearningEngine
+from voice import Voice
 
 BANNER = """
 ╔══════════════════════════════════════════╗
@@ -33,10 +34,13 @@ What I understand:
   progress              My growth, visualised
   memory                Everything I currently remember
   export [file]         Write my memory out as Markdown
+  voice on | off        Let me speak my replies out loud
+  voice <name>          Switch to a specific voice (e.g. he-IL-HilaNeural)
+  voices [prefix]       List the voices available to me (needs network)
   help                  This list
   exit                  End the session
 
-Hebrew works too: למד / כישור / שכח / סטטיסטיקה / התקדמות / זיכרון / עזרה / יציאה
+Hebrew works too: למד / כישור / שכח / סטטיסטיקה / התקדמות / זיכרון / קול / עזרה / יציאה
 Anything else is just conversation - and I learn from that as well.
 """
 
@@ -56,10 +60,13 @@ class Jimmy:
         name: str = "Jimmy",
         memory_file: str = "memory.json",
         offline: bool = False,
+        speak: bool = False,
+        voice_name: str = "auto",
     ) -> None:
         self.name = name
         self.engine = LearningEngine(memory_file)
         self.brain = Brain(force_offline=offline)
+        self.voice = Voice(enabled=speak, voice=voice_name)
         self.active = False
         self.history: List[Dict[str, str]] = []
 
@@ -74,6 +81,7 @@ class Jimmy:
             BANNER,
             f"\nHi{who}! I'm {self.name}.",
             self.brain.status_line(),
+            self.voice.status_line(),
         ]
         if stats["total_conversations"]:
             facts = _plural(stats["facts_learned"], "fact")
@@ -132,6 +140,8 @@ class Jimmy:
             if did_stream:
                 tracked(note)
             response += note
+
+        self.voice.say(response)
         return response
 
     def _learn_passively(self, text: str) -> str:
@@ -188,6 +198,13 @@ class Jimmy:
             if lowered.startswith(prefix):
                 return self.forget(text[len(prefix):])
 
+        if lowered == "voices" or lowered.startswith("voices "):
+            return self.list_voices(text[len("voices "):].strip() if len(text) > 6 else "")
+
+        for prefix in ("voice", "קול"):
+            if lowered == prefix or lowered.startswith(prefix + " "):
+                return self.set_voice(text[len(prefix):].strip())
+
         if lowered == "export" or lowered.startswith("export "):
             target = text[len("export "):].strip() if len(text) > len("export") else ""
             return self.export(target or "jimmy_memory_export.md")
@@ -239,6 +256,45 @@ class Jimmy:
         written = self.engine.export(path)
         return f"📄 Memory exported to {written}"
 
+    def set_voice(self, argument: str) -> str:
+        """`voice` / `voice on` / `voice off` / `voice <name>`."""
+        argument = argument.strip()
+
+        if not self.voice.available:
+            return f"🔇 I can't speak on this machine - {self.voice._why_unavailable()}"
+
+        if not argument:
+            return self.voice.status_line()
+
+        lowered = argument.lower()
+        if lowered in {"on", "start", "דבר", "הפעל"}:
+            self.voice.enabled = True
+            self.voice.say(f"Voice on. Hi, I'm {self.name}.")
+            return f"🔊 Voice on ({self.voice.backend}, {self.voice.voice})."
+
+        if lowered in {"off", "stop", "mute", "שקט", "כבה"}:
+            self.voice.stop()
+            self.voice.enabled = False
+            return "🔇 Voice off."
+
+        self.voice.voice = argument
+        self.voice.enabled = True
+        self.voice.say("This is how I sound now.")
+        return f"🎙️  Switched to '{argument}' and turned voice on."
+
+    def list_voices(self, prefix: str = "") -> str:
+        """The live catalogue, so you never have to guess a voice name."""
+        try:
+            names = self.voice.list_voices(prefix)
+        except Exception as exc:  # noqa: BLE001 - the catalogue needs network
+            return f"⚠️  Couldn't fetch the voice list ({exc}). Voices need network access."
+
+        if not names:
+            return f"🤷 No voices matched '{prefix}'. Try `voices he` or `voices en-US`."
+        shown = names[:40]
+        more = f"\n...and {len(names) - len(shown)} more" if len(names) > len(shown) else ""
+        return f"🎙️  {len(names)} voices available:\n  " + "\n  ".join(shown) + more
+
     def show_stats(self) -> str:
         stats = self.engine.get_learning_stats()
         skills = self.engine.knowledge_base["skills"]
@@ -284,6 +340,7 @@ Keep teaching me and I'll keep growing! 📈
 """
 
     def goodbye(self) -> str:
+        self.voice.stop()
         stats = self.engine.get_learning_stats()
         who = f", {stats['user_name']}" if stats["user_name"] else ""
         return f"""
@@ -340,9 +397,21 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--memory", default="memory.json", help="path to the memory file")
     parser.add_argument("--offline", action="store_true", help="never call the Claude API")
     parser.add_argument("--ask", metavar="MESSAGE", help="ask one thing and exit")
+    parser.add_argument("--voice", action="store_true", help="speak replies out loud")
+    parser.add_argument(
+        "--voice-name",
+        default="auto",
+        metavar="NAME",
+        help="voice to use (default: auto - Hebrew or English to match your message)",
+    )
     args = parser.parse_args(argv)
 
-    jimmy = Jimmy(memory_file=args.memory, offline=args.offline)
+    jimmy = Jimmy(
+        memory_file=args.memory,
+        offline=args.offline,
+        speak=args.voice,
+        voice_name=args.voice_name,
+    )
 
     if args.ask:
         print(jimmy.chat(args.ask))
