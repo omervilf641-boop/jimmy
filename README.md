@@ -18,6 +18,7 @@ He runs on **Claude** when credentials are available, and keeps working without 
 | 🌱 **Passive learning** | He picks up your name, job and preferences from normal conversation |
 | 🎓 **Skills that grow** | Proficiency rises each time a skill actually gets used |
 | 🧹 **Your memory, your rules** | `forget` anything, or wipe it all |
+| 🪟 **Runs as an app** | `jimmy --app` opens a real UI in your browser |
 | 🔧 **He can look** | Reads, lists and searches files in the folder you started him in |
 | 🪶 **Light** | ~24ms to start, ~14MB idle — heavy imports load only when used |
 | 🔊 **He talks** | Neural text-to-speech, Hebrew and English, picked to match your message |
@@ -49,8 +50,8 @@ That's it. The installer finds a Python 3.10+, builds Jimmy his own virtualenv, 
 player). Nothing is installed system-wide.
 
 ```bash
-export ANTHROPIC_API_KEY="sk-ant-..."   # optional - he runs offline without one
-jimmy
+jimmy --set-key sk-ant-...   # optional - he runs offline without one
+jimmy --app                  # or just `jimmy` for the terminal
 ```
 
 | Path | What it is |
@@ -73,6 +74,51 @@ virtualenv so Jimmy's dependencies never collide with anything else.
 **Running from a checkout** without installing: `pip install -r requirements.txt` then
 `python jimmy.py`.
 
+### 🔑 The API key
+
+Jimmy works without one, but only in offline mode. To give him a real brain:
+
+1. Go to **[console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys)**
+2. Sign in, add some credit under **Billing**, then **Create Key**
+3. Copy it (it starts with `sk-ant-` and is shown only once), then:
+
+```bash
+jimmy --set-key sk-ant-your-key-here
+```
+
+That saves it to `~/.jimmy/config.json` with owner-only permissions and **checks it against
+the API before telling you it worked** — a key that gets rejected is not kept, because a bad
+key fails on every single message.
+
+You can also paste it into the **API key** button in `jimmy --app`, or keep using
+`ANTHROPIC_API_KEY` in your environment, which always wins over the stored one.
+
+```bash
+jimmy --set-key ""     # remove the stored key and go back to offline
+```
+
+---
+
+### 🪟 As an app
+
+```bash
+jimmy --app
+```
+
+Opens a local web UI in your browser: chat, live status, a voice toggle and the API key
+field. It's `http.server` and one HTML page — **no new dependencies, no Electron, no build
+step**. Requests take about a millisecond.
+
+It binds to `127.0.0.1` only, and every request must carry a token minted at startup —
+without that, any web page you have open could talk to it.
+
+```bash
+jimmy --app --port 8765     # a fixed port
+jimmy --app --no-browser    # print the link instead of opening it
+```
+
+---
+
 ### His memory lives with you, not with your folder
 
 An installed `jimmy` gets run from everywhere, so his memory is **not** stored in the
@@ -86,7 +132,8 @@ project, or set `JIMMY_HOME`.
 ### Command-line options
 
 ```bash
-jimmy                                # interactive chat
+jimmy                                # interactive chat in the terminal
+jimmy --app                          # the browser app
 jimmy --ask "what do you know about me?"   # one question, then exit
 jimmy --offline                      # never call the API
 jimmy --memory ./project.json        # a separate memory for this project
@@ -247,7 +294,9 @@ jimmy/
 │   ├── learning_engine.py # memory, facts, skills, recall, persistence
 │   ├── extractor.py       # passive learning from ordinary conversation
 │   ├── voice.py           # text to speech, with layered backend fallback
-│   └── tools.py           # the five read-only tools and their sandbox
+│   ├── tools.py           # the five read-only tools and their sandbox
+│   ├── config.py          # where the API key is stored
+│   └── app.py             # the local web app (stdlib only)
 ├── jimmy.py               # run straight from a checkout
 ├── install.sh             # one-command install
 ├── pyproject.toml         # packaging and the `jimmy` command
@@ -255,6 +304,7 @@ jimmy/
 ├── test_brain_online.py   # online request shape and failure modes
 ├── test_voice.py          # voice backends, cleanup and commands
 ├── test_tools.py          # sandbox, budgets and the tool loop
+├── test_app.py            # config, key handling and the HTTP server
 ├── PROMPT.md              # the build brief this project was built from
 └── requirements.txt       # for running from a checkout
 ```
@@ -267,14 +317,15 @@ jimmy/
 python -m unittest discover -p "test_*.py"
 ```
 
-146 tests, no API key and no network required — the brain and the speaker are stubbed out,
+175 tests, no API key and no network required — the brain and the speaker are stubbed out,
 so every test exercises real behaviour deterministically. They cover persistence across
 restarts, schema migration from older memory files, corrupt-file recovery, duplicate
 handling, skill proficiency growth, forgetting, recall ranking, passive extraction (Hebrew
 and English), offline replies, the exact request sent to the API, voice backend selection,
 speech cleanup, background speaking and interruption, the tool sandbox and every budget, the
 tool loop including its cap, the startup footprint, and that his memory follows you
-between folders rather than the working directory.
+between folders rather than the working directory, plus the app's token check, its routes
+and its handling of a key the API rejects.
 
 ---
 

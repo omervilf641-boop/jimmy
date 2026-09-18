@@ -13,6 +13,8 @@ import os
 import re
 from typing import Callable, Dict, List, Optional
 
+from . import config
+
 import importlib.util
 
 # The SDK costs ~700ms and ~55MB to import, so it is loaded on first real use.
@@ -92,19 +94,26 @@ class Brain:
             self.offline_reason = "offline mode requested"
         elif not self._has_credentials():
             # Checked first: it is the common case, and it costs no import.
-            self.offline_reason = "no ANTHROPIC_API_KEY found in the environment"
+            self.offline_reason = "no API key yet - run `jimmy --set-key` or open the app"
         elif not _sdk_installed():
             self.offline_reason = "the 'anthropic' package is not installed (pip install anthropic)"
         else:
             try:
-                self.client = _sdk().Anthropic()
+                # Pass the key explicitly so a key stored in Jimmy's own config
+                # works without being exported into the environment.
+                stored = config.stored_api_key()
+                anthropic = _sdk()
+                self.client = (
+                    anthropic.Anthropic(api_key=stored) if stored and not os.environ.get("ANTHROPIC_API_KEY")
+                    else anthropic.Anthropic()
+                )
             except Exception as exc:  # noqa: BLE001 - any construction failure means offline
                 self.offline_reason = f"could not start the Claude client ({exc})"
 
     @staticmethod
     def _has_credentials() -> bool:
-        """The SDK also reads `ant auth login` profiles, so check those too."""
-        if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"):
+        """Environment, then Jimmy's own config, then an `ant auth login` profile."""
+        if config.api_key():
             return True
         profile_dir = os.path.expanduser("~/.config/anthropic")
         return os.path.isdir(profile_dir) and bool(os.listdir(profile_dir))
@@ -117,6 +126,31 @@ class Brain:
         if self.online:
             return f"🧠 Brain: Claude ({self.model}) - connected"
         return f"💤 Brain: offline mode - {self.offline_reason}"
+
+    def verify(self) -> tuple:
+        """Check the credentials actually work. Returns (ok, message).
+
+        Uses count_tokens: it authenticates against the real API without
+        generating anything, so confirming a key costs nothing.
+        """
+        if not self.online:
+            return False, self.offline_reason or "not connected"
+
+        try:
+            self.client.messages.count_tokens(  # type: ignore[union-attr]
+                model=self.model, messages=[{"role": "user", "content": "hi"}]
+            )
+            return True, f"connected to {self.model}"
+        except Exception as exc:  # noqa: BLE001 - narrowed below
+            anthropic = _sdk()
+            if anthropic is not None:
+                if isinstance(exc, anthropic.AuthenticationError):
+                    return False, "the API rejected that key"
+                if isinstance(exc, anthropic.PermissionDeniedError):
+                    return False, "that key exists but isn't allowed to use this model"
+                if isinstance(exc, anthropic.APIConnectionError):
+                    return None, "couldn't reach the API to check - the key was saved anyway"
+            return None, f"couldn't check the key ({type(exc).__name__}) - it was saved anyway"
 
     # ------------------------------------------------------------------
     # Response generation

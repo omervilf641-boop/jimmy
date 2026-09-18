@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
+from . import config
 from .brain import Brain
 from .extractor import extract
 from .learning_engine import LearningEngine
@@ -470,6 +471,33 @@ We've talked {stats['total_conversations']} times and I'm at {stats['learning_sc
                 self.active = False
 
 
+def _store_key(key: str) -> int:
+    """Save (or clear) the API key, and say what that changed."""
+    if key and not key.startswith("sk-ant-"):
+        print("⚠️  Anthropic keys start with 'sk-ant-'. Nothing was saved.")
+        print("   Get one at https://console.anthropic.com/settings/keys")
+        return 1
+
+    path = config.set_api_key(key)
+    if not key:
+        print(f"🔑 Key removed from {path}. Jimmy will run offline.")
+        return 0
+
+    print(f"🔑 Key saved to {path} (readable only by you).")
+    print("   Checking it with the API...")
+
+    ok, detail = Brain().verify()
+    if ok:
+        print(f"✅ {detail.capitalize()}. Start him with `jimmy --app`.")
+        return 0
+    if ok is None:
+        print(f"⚠️  {detail.capitalize()}.")
+        return 0
+    print(f"❌ {detail.capitalize()}.")
+    print("   Check it at https://console.anthropic.com/settings/keys")
+    return 1
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Jimmy - a learning AI agent")
     parser.add_argument(
@@ -479,6 +507,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     parser.add_argument("--offline", action="store_true", help="never call the Claude API")
     parser.add_argument("--ask", metavar="MESSAGE", help="ask one thing and exit")
+    parser.add_argument("--app", action="store_true", help="run as an app in your browser")
+    parser.add_argument("--port", type=int, default=0, help="port for --app (default: any free one)")
+    parser.add_argument("--no-browser", action="store_true", help="with --app, don't open a browser")
+    parser.add_argument("--set-key", metavar="KEY", help="save an Anthropic API key and exit")
     parser.add_argument("--voice", action="store_true", help="speak replies out loud")
     parser.add_argument("--no-tools", action="store_true", help="don't let Jimmy look at files")
     parser.add_argument("--root", default=".", help="folder Jimmy may look inside (default: here)")
@@ -489,6 +521,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="voice to use (default: auto - Hebrew or English to match your message)",
     )
     args = parser.parse_args(argv)
+
+    if args.set_key is not None:
+        return _store_key(args.set_key)
 
     jimmy = Jimmy(
         memory_file=args.memory,
@@ -502,6 +537,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.ask:
         print(jimmy.chat(args.ask))
         return 0
+
+    if args.app:
+        from .app import run as run_app
+
+        return run_app(jimmy, port=args.port, open_browser=not args.no_browser)
 
     jimmy.interactive_mode()
     return 0
