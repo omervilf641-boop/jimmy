@@ -4,6 +4,9 @@
 #   ./install.sh              install with voice support
 #   ./install.sh --no-voice   skip the text-to-speech dependency
 #
+# It also works with no checkout at all, piped straight from the web:
+#   curl -fsSL <raw url>/install.sh | bash
+#
 # Nothing is installed system-wide. Everything lives under ~/.jimmy:
 #   ~/.jimmy/venv         the install  - delete this to uninstall
 #   ~/.jimmy/memory.json  what he remembers about you - kept separate on purpose
@@ -17,8 +20,9 @@ JIMMY_HOME="${JIMMY_HOME:-$HOME/.jimmy}"
 # The venv is a subfolder so that uninstalling never takes his memory with it.
 VENV="$JIMMY_HOME/venv"
 BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
-SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXTRAS="[voice]"
+REPO="${JIMMY_REPO:-https://github.com/omervilf641-boop/jimmy.git}"
+BRANCH="${JIMMY_BRANCH:-claude/open-graves-project-ignurr}"
 
 [ "${1:-}" = "--no-voice" ] && EXTRAS=""
 
@@ -27,6 +31,32 @@ say() { printf '  %s\n' "$1"; }
 echo
 echo "🤖 Installing Jimmy"
 echo
+
+# --- find the source ------------------------------------------------------
+# Run from a checkout, this is that checkout. Piped from curl there is no
+# checkout at all, so fetch one.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "")"
+
+if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/pyproject.toml" ]; then
+    SOURCE_DIR="$SCRIPT_DIR"
+    say "Installing from this checkout: $SOURCE_DIR"
+else
+    command -v git >/dev/null 2>&1 || {
+        echo "❌ git is needed to download Jimmy. Install git and run this again."
+        exit 1
+    }
+    SOURCE_DIR="${JIMMY_HOME:-$HOME/.jimmy}/src"
+    if [ -d "$SOURCE_DIR/.git" ]; then
+        say "Updating the copy at $SOURCE_DIR"
+        git -C "$SOURCE_DIR" fetch --quiet origin "$BRANCH"
+        git -C "$SOURCE_DIR" checkout --quiet "$BRANCH"
+        git -C "$SOURCE_DIR" reset --hard --quiet "origin/$BRANCH"
+    else
+        say "Downloading Jimmy into $SOURCE_DIR"
+        mkdir -p "$(dirname "$SOURCE_DIR")"
+        git clone --quiet --depth 1 --branch "$BRANCH" "$REPO" "$SOURCE_DIR"
+    fi
+fi
 
 # --- Python ---------------------------------------------------------------
 PYTHON=""

@@ -30,9 +30,17 @@ He runs on **Claude** when credentials are available, and keeps working without 
 
 ### Install
 
+One line, nothing to clone first:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/omervilf641-boop/jimmy/claude/open-graves-project-ignurr/install.sh | bash
+```
+
+Or from a checkout, if you'd rather read the script before running it (fair):
+
 ```bash
 git clone https://github.com/omervilf641-boop/jimmy.git
-cd jimmy
+cd jimmy && git checkout claude/open-graves-project-ignurr
 ./install.sh
 ```
 
