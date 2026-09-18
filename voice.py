@@ -24,12 +24,34 @@ import tempfile
 import threading
 from typing import List, Optional, Tuple
 
-try:
-    import edge_tts
-    from edge_tts.constants import DEFAULT_VOICE as EDGE_FALLBACK_VOICE
-except ImportError:  # pragma: no cover - exercised on installs without the extra
-    edge_tts = None  # type: ignore[assignment]
-    EDGE_FALLBACK_VOICE = "en-US-EmmaMultilingualNeural"
+import importlib.util
+
+# edge-tts pulls in aiohttp: ~220ms and ~29MB. Loaded only when Jimmy speaks.
+EDGE_FALLBACK_VOICE = "en-US-EmmaMultilingualNeural"  # the SDK's own default
+
+_tts_module = None
+_tts_loaded = False
+
+
+def _tts():
+    """Import edge-tts on demand. Returns None if it isn't installed."""
+    global _tts_module, _tts_loaded
+    if not _tts_loaded:
+        _tts_loaded = True
+        try:
+            import edge_tts as module
+
+            _tts_module = module
+        except ImportError:  # pragma: no cover - only on bare installs
+            _tts_module = None
+    return _tts_module
+
+
+def _tts_installed() -> bool:
+    """Is edge-tts available? Checked without importing it."""
+    if _tts_loaded:
+        return _tts_module is not None
+    return importlib.util.find_spec("edge_tts") is not None
 
 # Preferred voices per language. The service's catalogue changes over time, so a
 # rejected name falls back to the SDK's own default rather than failing.
@@ -123,7 +145,7 @@ class Voice:
         self.backend = self._choose_backend()
 
     def _choose_backend(self) -> str:
-        if edge_tts is not None and self._player is not None:
+        if _tts_installed() and self._player is not None:
             return "edge-tts"
         if self._piper and self._player is not None:
             return "piper"
@@ -142,7 +164,7 @@ class Voice:
         return f"🔊 Voice: {self.backend}, {state}"
 
     def _why_unavailable(self) -> str:
-        if edge_tts is None and not self._system_tts:
+        if not _tts_installed() and not self._system_tts:
             return "install edge-tts (pip install edge-tts) and an audio player like ffmpeg"
         if self._player is None and not self._system_tts:
             return "no audio player found (install ffmpeg, mpv or mpg123)"
@@ -184,6 +206,10 @@ class Voice:
 
     def _synthesize_edge(self, text: str, path: str) -> None:
         """Write an mp3, retrying once with the SDK default if the voice is rejected."""
+        edge_tts = _tts()
+        if edge_tts is None:  # pragma: no cover - guarded by backend selection
+            raise RuntimeError("edge-tts is not installed")
+
         chosen = self._resolve_voice(text)
         try:
             edge_tts.Communicate(text, chosen, rate=self.rate, proxy=_proxy()).save_sync(path)
@@ -271,6 +297,7 @@ class Voice:
 
     def list_voices(self, language: str = "") -> List[str]:
         """Live voice catalogue from the service. Needs network."""
+        edge_tts = _tts()
         if edge_tts is None:
             return []
         import asyncio

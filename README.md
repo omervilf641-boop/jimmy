@@ -18,6 +18,8 @@ He runs on **Claude** when credentials are available, and keeps working without 
 | 🌱 **Passive learning** | He picks up your name, job and preferences from normal conversation |
 | 🎓 **Skills that grow** | Proficiency rises each time a skill actually gets used |
 | 🧹 **Your memory, your rules** | `forget` anything, or wipe it all |
+| 🔧 **He can look** | Reads, lists and searches files in the folder you started him in |
+| 🪶 **Light** | ~24ms to start, ~14MB idle — heavy imports load only when used |
 | 🔊 **He talks** | Neural text-to-speech, Hebrew and English, picked to match your message |
 | 💤 **Offline mode** | No API key? He still remembers, learns and responds |
 | 🌍 **Bilingual** | Hebrew and English, commands included |
@@ -44,6 +46,8 @@ python jimmy.py --offline                # never call the API
 python jimmy.py --memory work.json       # keep separate memories
 python jimmy.py --voice                  # speak replies out loud
 python jimmy.py --voice --voice-name he-IL-HilaNeural
+python jimmy.py --no-tools                # don't let him look at files
+python jimmy.py --root ~/code/myproject   # point him at a different folder
 ```
 
 ---
@@ -63,10 +67,11 @@ python jimmy.py --voice --voice-name he-IL-HilaNeural
 | `voice on` / `voice off` | Start or stop speaking replies out loud |
 | `voice <name>` | Switch voice, e.g. `voice he-IL-HilaNeural` |
 | `voices [prefix]` | List available voices, e.g. `voices he` |
+| `tools` | What he can look at, and where |
 | `help` | The command list |
 | `exit` | End the session (everything is already saved) |
 
-Hebrew aliases: `למד` · `כישור` · `שכח` · `סטטיסטיקה` · `התקדמות` · `זיכרון` · `קול` · `עזרה` · `יציאה`
+Hebrew aliases: `למד` · `כישור` · `שכח` · `סטטיסטיקה` · `התקדמות` · `זיכרון` · `קול` · `כלים` · `עזרה` · `יציאה`
 
 Anything that isn't a command is just conversation — and Jimmy learns from that too.
 
@@ -90,6 +95,59 @@ saved to memory.json   ← atomic write, survives restarts
 
 **Learning score (0–100):** conversations 40% · facts 30% · skills 30%.
 Levels: Beginner 🌱 → Growing 🌿 → Competent 🌳 → Expert 🌲
+
+---
+
+## 🔧 Tools
+
+Jimmy can look at your files to answer questions about them, instead of asking you to paste
+things in. He decides when to use them — you just ask.
+
+| Tool | What it does |
+|---|---|
+| `list_files` | See what's in a folder |
+| `read_file` | Read a text file, paged |
+| `search_files` | Regex search across files |
+| `remember` | Save something durable into his memory |
+| `recall` | Search his own memory |
+
+```
+💬 You: what does the tool loop do if the model keeps calling tools?
+   🔧 search_files(MAX_TOOL_ROUNDS)
+   🔧 read_file(brain.py)
+🤖 Jimmy: It caps at 4 rounds, then asks for a plain answer with what it has.
+```
+
+**Deliberately small.** Five tools, standard library only, no new dependencies and no
+background processes. Everything is bounded so a call costs milliseconds, not seconds:
+
+- Files are read 200 lines and 40KB at a time; any result is capped at 8,000 characters
+- A search stops after 600 files or 20 hits, and skips `.git`, `node_modules`, `__pycache__`
+  and binaries
+- The tool loop is capped at 4 rounds — one question can never run away
+
+**He cannot write to or run anything on your machine.** The tools are read-only, confined to
+the folder Jimmy was started in (`..` and absolute paths outside it are refused), and the
+only thing he can change is his own memory. `--no-tools` turns them off entirely; `--root`
+points him somewhere else.
+
+Tools need the Claude brain — in offline mode there is no model to decide when to use them.
+
+---
+
+## 🪶 Footprint
+
+Jimmy is meant to run on an ordinary laptop, so the expensive imports are deferred until
+something actually needs them:
+
+| | offline, no voice | with the Claude brain |
+|---|---|---|
+| startup | **~24 ms** | ~720 ms (first call only) |
+| memory | **~14 MB** | ~67 MB |
+
+A tool call costs 0.3–4 ms and under 200KB. `memory.json` is about 38KB after 200
+conversations, and recall over it takes well under a millisecond. Three tests guard this —
+if a heavy import creeps back into startup, they fail.
 
 ---
 
@@ -141,9 +199,11 @@ jimmy/
 ├── learning_engine.py     # memory, facts, skills, recall, persistence
 ├── extractor.py           # passive learning from ordinary conversation
 ├── voice.py               # text to speech, with layered backend fallback
+├── tools.py               # the five read-only tools and their sandbox
 ├── test_jimmy.py          # memory, learning and end-to-end tests
 ├── test_brain_online.py   # online request shape and failure modes
 ├── test_voice.py          # voice backends, cleanup and commands
+├── test_tools.py          # sandbox, budgets and the tool loop
 ├── PROMPT.md              # the build brief this project was built from
 ├── requirements.txt       # one dependency: anthropic
 └── memory.json            # created on first run — gitignored, it's yours
@@ -157,13 +217,13 @@ jimmy/
 python -m unittest discover -p "test_*.py"
 ```
 
-95 tests, no API key and no network required — the brain and the speaker are both stubbed
-out, so every test exercises real behaviour deterministically. They cover persistence across
+142 tests, no API key and no network required — the brain and the speaker are stubbed out,
+so every test exercises real behaviour deterministically. They cover persistence across
 restarts, schema migration from older memory files, corrupt-file recovery, duplicate
 handling, skill proficiency growth, forgetting, recall ranking, passive extraction (Hebrew
 and English), offline replies, the exact request sent to the API, voice backend selection,
-speech text cleanup, background speaking and interruption, and every failure branch around
-all of it.
+speech cleanup, background speaking and interruption, the tool sandbox and every budget, the
+tool loop including its cap, and the startup footprint.
 
 ---
 
@@ -172,7 +232,11 @@ all of it.
 `memory.json` holds your actual conversations. It is gitignored and never leaves your
 machine except as context in your own Claude API calls — and, when voice is on, the text of
 his replies is sent to Microsoft's TTS service to be spoken. Turn voice off and nothing
-goes there. `forget` and `export` are there so
+goes there.
+
+His tools are read-only and confined to the folder you start him in, but file contents he
+reads do go to the Claude API as context. Use `--root` to narrow that, or `--no-tools` to
+switch it off. `forget` and `export` are there so
 you stay in control of it.
 
 ---

@@ -374,7 +374,8 @@ class TestJimmyEndToEnd(MemoryTestCase):
         class FakeStreamingBrain:
             online = True
 
-            def respond(self, user_input, memory_context="", history=None, on_text=None):
+            def respond(self, user_input, memory_context="", history=None,
+                        on_text=None, toolbox=None, on_tool=None):
                 for chunk in ("Hi ", "there!"):
                     on_text(chunk)
                 return "Hi there!"
@@ -393,6 +394,57 @@ class TestJimmyEndToEnd(MemoryTestCase):
         self.assertEqual(len(agent.history), 2)
         self.assertEqual(agent.history[0]["role"], "user")
         self.assertEqual(agent.history[1]["role"], "assistant")
+
+
+class TestFootprint(unittest.TestCase):
+    """Jimmy has to start fast on an ordinary laptop.
+
+    The anthropic SDK costs ~700ms and ~55MB to import, edge-tts another ~220ms
+    and ~29MB. Neither may be imported until it is actually needed, or startup
+    regresses by an order of magnitude.
+    """
+
+    def _probe(self, script: str) -> str:
+        import subprocess
+        import sys
+
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.strip()
+
+    def test_offline_startup_imports_neither_heavy_dependency(self) -> None:
+        output = self._probe(
+            "import sys, tempfile, os\n"
+            "from jimmy import Jimmy\n"
+            "Jimmy(memory_file=os.path.join(tempfile.mkdtemp(), 'm.json'), offline=True)\n"
+            "print('anthropic' in sys.modules, 'edge_tts' in sys.modules)"
+        )
+        self.assertEqual(output, "False False", "heavy dependencies must stay unimported")
+
+    def test_sdk_is_imported_once_credentials_exist(self) -> None:
+        output = self._probe(
+            "import sys, os\n"
+            "os.environ['ANTHROPIC_API_KEY'] = 'sk-ant-probe'\n"
+            "from brain import Brain\n"
+            "brain = Brain()\n"
+            "print('anthropic' in sys.modules, brain.online)"
+        )
+        self.assertEqual(output, "True True", "the SDK must load when it is actually needed")
+
+    def test_startup_is_fast(self) -> None:
+        output = self._probe(
+            "import time, tempfile, os\n"
+            "start = time.perf_counter()\n"
+            "from jimmy import Jimmy\n"
+            "Jimmy(memory_file=os.path.join(tempfile.mkdtemp(), 'm.json'), offline=True)\n"
+            "print(int((time.perf_counter() - start) * 1000))"
+        )
+        self.assertLess(int(output), 400, f"offline startup took {output}ms - something heavy crept in")
 
 
 if __name__ == "__main__":

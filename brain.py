@@ -13,14 +13,38 @@ import os
 import re
 from typing import Callable, Dict, List, Optional
 
-try:  # The package is optional - Jimmy must run without it.
-    import anthropic
-except ImportError:  # pragma: no cover - exercised only on bare installs
-    anthropic = None  # type: ignore[assignment]
+import importlib.util
+
+# The SDK costs ~700ms and ~55MB to import, so it is loaded on first real use.
+# Offline sessions never pay for it.
+_sdk_module = None
+_sdk_loaded = False
+
+
+def _sdk():
+    """Import the Anthropic SDK on demand. Returns None if it isn't installed."""
+    global _sdk_module, _sdk_loaded
+    if not _sdk_loaded:
+        _sdk_loaded = True
+        try:
+            import anthropic as module
+
+            _sdk_module = module
+        except ImportError:  # pragma: no cover - only on bare installs
+            _sdk_module = None
+    return _sdk_module
+
+
+def _sdk_installed() -> bool:
+    """Is the SDK available? Checked without importing it."""
+    if _sdk_loaded:
+        return _sdk_module is not None
+    return importlib.util.find_spec("anthropic") is not None
 
 DEFAULT_MODEL = "claude-opus-5"
 MAX_TOKENS = 4096
 HISTORY_TURNS = 12  # how many past turns are replayed to the model
+MAX_TOOL_ROUNDS = 4  # a hard ceiling, so one question can never run away
 
 PERSONA = """You are Jimmy, a personal AI agent who learns from one specific user and helps them.
 
@@ -35,6 +59,14 @@ How your memory works:
 - Use it naturally. If you know their name, use it. If you know their preferences, honour them.
 - Never invent memories. If the MEMORY block does not contain something, you do not know it.
 - If the user tells you something worth keeping, acknowledge it briefly - it is being saved.
+
+Your tools:
+- You can list, read and search files in the folder you were started in, and you can
+  save things into your own memory. Use them rather than asking the user to paste things.
+- Look before you answer: list or search first, then read what matters. Do not read a
+  whole large file when a search would do.
+- Keep it to a few calls. If you have enough to answer, answer.
+- When you learn something durable about the user or their project, save it with `remember`.
 
 What you actually do: you help. Answer the question, solve the problem, give the concrete
 next step. Do not describe what you could do instead of doing it."""
@@ -58,13 +90,14 @@ class Brain:
             return
         if force_offline:
             self.offline_reason = "offline mode requested"
-        elif anthropic is None:
-            self.offline_reason = "the 'anthropic' package is not installed (pip install anthropic)"
         elif not self._has_credentials():
+            # Checked first: it is the common case, and it costs no import.
             self.offline_reason = "no ANTHROPIC_API_KEY found in the environment"
+        elif not _sdk_installed():
+            self.offline_reason = "the 'anthropic' package is not installed (pip install anthropic)"
         else:
             try:
-                self.client = anthropic.Anthropic()
+                self.client = _sdk().Anthropic()
             except Exception as exc:  # noqa: BLE001 - any construction failure means offline
                 self.offline_reason = f"could not start the Claude client ({exc})"
 
@@ -95,13 +128,17 @@ class Brain:
         memory_context: str = "",
         history: Optional[List[Dict[str, str]]] = None,
         on_text: Optional[Callable[[str], None]] = None,
+        toolbox: Optional[object] = None,
+        on_tool: Optional[Callable[[str], None]] = None,
     ) -> str:
         """Produce Jimmy's reply. `on_text` receives streamed chunks when online."""
         if not self.online:
             return self._offline_respond(user_input, memory_context)
 
         try:
-            return self._claude_respond(user_input, memory_context, history or [], on_text)
+            return self._claude_respond(
+                user_input, memory_context, history or [], on_text, toolbox, on_tool
+            )
         except Exception as exc:  # noqa: BLE001 - narrowed inside the handler
             fallback = self._handle_api_error(exc)
             if fallback is not None:
@@ -110,6 +147,7 @@ class Brain:
 
     def _handle_api_error(self, exc: Exception) -> Optional[str]:
         """Turn an API failure into a graceful reply, dropping offline if needed."""
+        anthropic = _sdk()
         if anthropic is None:
             return None
 
@@ -149,12 +187,15 @@ class Brain:
         memory_context: str,
         history: List[Dict[str, str]],
         on_text: Optional[Callable[[str], None]],
+        toolbox: Optional[object] = None,
+        on_tool: Optional[Callable[[str], None]] = None,
     ) -> str:
         try:
-            return self._stream(user_input, memory_context, history, on_text)
+            return self._stream(user_input, memory_context, history, on_text, toolbox, on_tool)
         except Exception as exc:  # noqa: BLE001
             # Older models reject mid-conversation system messages - retry once
             # with the memory folded into the user turn instead.
+            anthropic = _sdk()
             rejects_system = (
                 anthropic is not None
                 and isinstance(exc, anthropic.BadRequestError)
@@ -164,7 +205,31 @@ class Brain:
             if not rejects_system:
                 raise
             self._mid_conversation_system = False
-            return self._stream(user_input, memory_context, history, on_text)
+            return self._stream(user_input, memory_context, history, on_text, toolbox, on_tool)
+
+    @staticmethod
+    def _finalize(replies: List[str]) -> str:
+        """Never hand back an empty reply - silence looks like a crash."""
+        answer = "\n\n".join(replies).strip()
+        return answer or "I came up empty on that one. Try asking it a different way?"
+
+    def _one_turn(self, messages: List[Dict[str, object]], tools, on_text):
+        """One request/response round, streamed."""
+        request: Dict[str, object] = {
+            "model": self.model,
+            "max_tokens": MAX_TOKENS,
+            "system": PERSONA,
+            "output_config": {"effort": "low"},  # chat replies don't need deep reasoning
+            "messages": messages,
+        }
+        if tools:
+            request["tools"] = tools
+
+        with self.client.messages.stream(**request) as stream:  # type: ignore[union-attr]
+            if on_text is not None:
+                for chunk in stream.text_stream:
+                    on_text(chunk)
+            return stream.get_final_message()
 
     def _stream(
         self,
@@ -172,26 +237,52 @@ class Brain:
         memory_context: str,
         history: List[Dict[str, str]],
         on_text: Optional[Callable[[str], None]],
+        toolbox: Optional[object] = None,
+        on_tool: Optional[Callable[[str], None]] = None,
     ) -> str:
         messages = self._build_messages(user_input, memory_context, history)
-        with self.client.messages.stream(  # type: ignore[union-attr]
-            model=self.model,
-            max_tokens=MAX_TOKENS,
-            system=PERSONA,
-            output_config={"effort": "low"},  # chat replies don't need deep reasoning
-            messages=messages,
-        ) as stream:
-            if on_text is not None:
-                for chunk in stream.text_stream:
-                    on_text(chunk)
-            message = stream.get_final_message()
+        tools = toolbox.definitions() if toolbox is not None else None
+        replies: List[str] = []
 
-        if message.stop_reason == "refusal":
-            return "I'd rather not answer that one. Ask me something else and I'm all yours."
+        for _ in range(MAX_TOOL_ROUNDS if toolbox is not None else 1):
+            message = self._one_turn(messages, tools, on_text)
 
-        return "".join(
-            block.text for block in message.content if block.type == "text"
-        ).strip()
+            if message.stop_reason == "refusal":
+                return "I'd rather not answer that one. Ask me something else and I'm all yours."
+
+            text = "".join(b.text for b in message.content if b.type == "text").strip()
+            if text:
+                replies.append(text)
+
+            calls = [b for b in message.content if b.type == "tool_use"]
+            if not calls:
+                return self._finalize(replies)
+
+            messages.append({"role": "assistant", "content": message.content})
+            results = []
+            for call in calls:
+                if on_tool is not None:
+                    on_tool(toolbox.describe_call(call.name, call.input))  # type: ignore[union-attr]
+                output, failed = toolbox.run(call.name, call.input)  # type: ignore[union-attr]
+                results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": call.id,
+                        "content": output,
+                        "is_error": failed,
+                    }
+                )
+            messages.append({"role": "user", "content": results})
+
+        # Out of rounds: ask for a plain answer with what it already has.
+        messages.append(
+            {"role": "user", "content": "That is enough looking. Answer now with what you have."}
+        )
+        final = self._one_turn(messages, None, on_text)
+        text = "".join(b.text for b in final.content if b.type == "text").strip()
+        if text:
+            replies.append(text)
+        return self._finalize(replies)
 
     # ------------------------------------------------------------------
     # Offline mode

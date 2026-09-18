@@ -15,6 +15,7 @@ from typing import Callable, Dict, List, Optional
 from brain import Brain
 from extractor import extract
 from learning_engine import LearningEngine
+from tools import Toolbox
 from voice import Voice
 
 BANNER = """
@@ -37,10 +38,11 @@ What I understand:
   voice on | off        Let me speak my replies out loud
   voice <name>          Switch to a specific voice (e.g. he-IL-HilaNeural)
   voices [prefix]       List the voices available to me (needs network)
+  tools                 What I can look at on this machine
   help                  This list
   exit                  End the session
 
-Hebrew works too: למד / כישור / שכח / סטטיסטיקה / התקדמות / זיכרון / קול / עזרה / יציאה
+Hebrew works too: למד / כישור / שכח / סטטיסטיקה / התקדמות / זיכרון / קול / כלים / עזרה / יציאה
 Anything else is just conversation - and I learn from that as well.
 """
 
@@ -62,11 +64,14 @@ class Jimmy:
         offline: bool = False,
         speak: bool = False,
         voice_name: str = "auto",
+        use_tools: bool = True,
+        root: str = ".",
     ) -> None:
         self.name = name
         self.engine = LearningEngine(memory_file)
         self.brain = Brain(force_offline=offline)
         self.voice = Voice(enabled=speak, voice=voice_name)
+        self.toolbox = Toolbox(self.engine, root=root) if use_tools else None
         self.active = False
         self.history: List[Dict[str, str]] = []
 
@@ -82,6 +87,7 @@ class Jimmy:
             f"\nHi{who}! I'm {self.name}.",
             self.brain.status_line(),
             self.voice.status_line(),
+            self.tools_status_line(),
         ]
         if stats["total_conversations"]:
             facts = _plural(stats["facts_learned"], "fact")
@@ -97,11 +103,23 @@ class Jimmy:
         print(greeting)
         return greeting
 
+    def tools_status_line(self) -> str:
+        if self.toolbox is None:
+            return "🔧 Tools: off"
+        if not self.brain.online:
+            return "🔧 Tools: ready, but they need the Claude brain (currently offline)"
+        return f"🔧 Tools: on, scoped to {self.toolbox.root}"
+
     # ------------------------------------------------------------------
     # Conversation
     # ------------------------------------------------------------------
 
-    def chat(self, user_input: str, on_text: Optional[Callable[[str], None]] = None) -> str:
+    def chat(
+        self,
+        user_input: str,
+        on_text: Optional[Callable[[str], None]] = None,
+        on_tool: Optional[Callable[[str], None]] = None,
+    ) -> str:
         """Handle one message. Commands are handled locally; the rest goes to the brain."""
         text = user_input.strip()
         if not text:
@@ -128,6 +146,8 @@ class Jimmy:
             memory_context=memory_context,
             history=self.history,
             on_text=tracked if on_text is not None else None,
+            toolbox=self.toolbox,
+            on_tool=on_tool,
         )
 
         self.engine.practice_relevant_skills(f"{text} {response}")
@@ -198,6 +218,9 @@ class Jimmy:
             if lowered.startswith(prefix):
                 return self.forget(text[len(prefix):])
 
+        if lowered in {"tools", "כלים"}:
+            return self.show_tools()
+
         if lowered == "voices" or lowered.startswith("voices "):
             return self.list_voices(text[len("voices "):].strip() if len(text) > 6 else "")
 
@@ -255,6 +278,19 @@ class Jimmy:
     def export(self, path: str) -> str:
         written = self.engine.export(path)
         return f"📄 Memory exported to {written}"
+
+    def show_tools(self) -> str:
+        """What Jimmy can reach, and where."""
+        if self.toolbox is None:
+            return "🔧 Tools are off (started with --no-tools)."
+        names = "\n".join(f"  • {t['name']}" for t in self.toolbox.definitions())
+        return f"""
+🔧 My tools (read-only, scoped to {self.toolbox.root})
+{names}
+
+I use them on my own when a question needs them - just ask.
+The only thing I can change is my own memory.
+"""
 
     def set_voice(self, argument: str) -> str:
         """`voice` / `voice on` / `voice off` / `voice <name>`."""
@@ -377,8 +413,15 @@ We've talked {stats['total_conversations']} times and I'm at {stats['learning_sc
                     streamed = True
                 print(chunk, end="", flush=True)
 
+            def on_tool(description: str) -> None:
+                nonlocal streamed
+                if streamed:
+                    print()
+                    streamed = False
+                print(f"   🔧 {description}", flush=True)
+
             try:
-                response = self.chat(user_input, on_text=on_text)
+                response = self.chat(user_input, on_text=on_text, on_tool=on_tool)
             except Exception as exc:  # noqa: BLE001 - the loop must never die
                 print(f"\n❌ Something went wrong: {exc}")
                 continue
@@ -398,6 +441,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--offline", action="store_true", help="never call the Claude API")
     parser.add_argument("--ask", metavar="MESSAGE", help="ask one thing and exit")
     parser.add_argument("--voice", action="store_true", help="speak replies out loud")
+    parser.add_argument("--no-tools", action="store_true", help="don't let Jimmy look at files")
+    parser.add_argument("--root", default=".", help="folder Jimmy may look inside (default: here)")
     parser.add_argument(
         "--voice-name",
         default="auto",
@@ -411,6 +456,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         offline=args.offline,
         speak=args.voice,
         voice_name=args.voice_name,
+        use_tools=not args.no_tools,
+        root=args.root,
     )
 
     if args.ask:
