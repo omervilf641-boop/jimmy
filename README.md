@@ -28,26 +28,64 @@ He runs on **Claude** when credentials are available, and keeps working without 
 
 ## 🚀 Getting started
 
+### Install
+
 ```bash
 git clone https://github.com/omervilf641-boop/jimmy.git
 cd jimmy
-pip install -r requirements.txt
-
-export ANTHROPIC_API_KEY="sk-ant-..."   # optional - see Offline mode below
-python jimmy.py
+./install.sh
 ```
+
+That's it. The installer finds a Python 3.10+, builds Jimmy his own virtualenv, puts a
+`jimmy` command on your PATH, and tells you what's still missing (an API key, an audio
+player). Nothing is installed system-wide.
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."   # optional - he runs offline without one
+jimmy
+```
+
+| Path | What it is |
+|---|---|
+| `~/.jimmy/venv` | the install — delete it to uninstall |
+| `~/.jimmy/memory.json` | what he remembers about you — kept separate on purpose |
+| `~/.local/bin/jimmy` | the command |
+
+```bash
+./install.sh --no-voice        # skip the text-to-speech dependency
+JIMMY_HOME=~/work/jimmy ./install.sh   # install somewhere else
+
+rm -rf ~/.jimmy/venv ~/.local/bin/jimmy   # uninstall, keeping his memory
+rm ~/.jimmy/memory.json                    # make him forget you
+```
+
+**Prefer pip?** `pip install ".[voice]"` works too — the installer just wraps it in a
+virtualenv so Jimmy's dependencies never collide with anything else.
+
+**Running from a checkout** without installing: `pip install -r requirements.txt` then
+`python jimmy.py`.
+
+### His memory lives with you, not with your folder
+
+An installed `jimmy` gets run from everywhere, so his memory is **not** stored in the
+current directory — it lives at `~/.jimmy/memory.json` and follows you between projects.
+The first time he starts he'll adopt an existing `./memory.json` if he finds one, so nothing
+from an earlier checkout is lost.
+
+Point him at a different memory with `--memory ./project.json` when you want one Jimmy per
+project, or set `JIMMY_HOME`.
 
 ### Command-line options
 
 ```bash
-python jimmy.py                          # interactive chat
-python jimmy.py --ask "what do you know about me?"   # one question, then exit
-python jimmy.py --offline                # never call the API
-python jimmy.py --memory work.json       # keep separate memories
-python jimmy.py --voice                  # speak replies out loud
-python jimmy.py --voice --voice-name he-IL-HilaNeural
-python jimmy.py --no-tools                # don't let him look at files
-python jimmy.py --root ~/code/myproject   # point him at a different folder
+jimmy                                # interactive chat
+jimmy --ask "what do you know about me?"   # one question, then exit
+jimmy --offline                      # never call the API
+jimmy --memory ./project.json        # a separate memory for this project
+jimmy --voice                        # speak replies out loud
+jimmy --voice --voice-name he-IL-HilaNeural
+jimmy --no-tools                     # don't let him look at files
+jimmy --root ~/code/myproject        # point him at a different folder
 ```
 
 ---
@@ -156,10 +194,11 @@ if a heavy import creeps back into startup, they fail.
 Jimmy can speak his replies. Turn it on with `--voice` at startup or `voice on` mid-chat.
 
 ```bash
-pip install edge-tts          # the voices
 brew install ffmpeg           # or: apt install ffmpeg / mpv / mpg123
-python jimmy.py --voice
+jimmy --voice
 ```
+
+(`install.sh` already installs the voices; it only needs an audio player from you.)
 
 Voices come from **Microsoft Edge's neural TTS** — free, no API key, and genuinely good in
 both Hebrew and English. By default Jimmy picks the voice to match the language you wrote
@@ -194,19 +233,22 @@ If credentials are rejected mid-session, he switches to offline mode without los
 
 ```
 jimmy/
-├── jimmy.py               # the agent, CLI and command handling
-├── brain.py               # Claude API integration + offline fallback
-├── learning_engine.py     # memory, facts, skills, recall, persistence
-├── extractor.py           # passive learning from ordinary conversation
-├── voice.py               # text to speech, with layered backend fallback
-├── tools.py               # the five read-only tools and their sandbox
-├── test_jimmy.py          # memory, learning and end-to-end tests
+├── jimmy_agent/
+│   ├── agent.py           # the agent, CLI and command handling
+│   ├── brain.py           # Claude API integration + offline fallback
+│   ├── learning_engine.py # memory, facts, skills, recall, persistence
+│   ├── extractor.py       # passive learning from ordinary conversation
+│   ├── voice.py           # text to speech, with layered backend fallback
+│   └── tools.py           # the five read-only tools and their sandbox
+├── jimmy.py               # run straight from a checkout
+├── install.sh             # one-command install
+├── pyproject.toml         # packaging and the `jimmy` command
+├── test_jimmy.py          # memory, learning, footprint, end-to-end
 ├── test_brain_online.py   # online request shape and failure modes
 ├── test_voice.py          # voice backends, cleanup and commands
 ├── test_tools.py          # sandbox, budgets and the tool loop
 ├── PROMPT.md              # the build brief this project was built from
-├── requirements.txt       # one dependency: anthropic
-└── memory.json            # created on first run — gitignored, it's yours
+└── requirements.txt       # for running from a checkout
 ```
 
 ---
@@ -217,13 +259,14 @@ jimmy/
 python -m unittest discover -p "test_*.py"
 ```
 
-142 tests, no API key and no network required — the brain and the speaker are stubbed out,
+146 tests, no API key and no network required — the brain and the speaker are stubbed out,
 so every test exercises real behaviour deterministically. They cover persistence across
 restarts, schema migration from older memory files, corrupt-file recovery, duplicate
 handling, skill proficiency growth, forgetting, recall ranking, passive extraction (Hebrew
 and English), offline replies, the exact request sent to the API, voice backend selection,
 speech cleanup, background speaking and interruption, the tool sandbox and every budget, the
-tool loop including its cap, and the startup footprint.
+tool loop including its cap, the startup footprint, and that his memory follows you
+between folders rather than the working directory.
 
 ---
 

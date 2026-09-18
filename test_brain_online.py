@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 import anthropic
 import httpx2 as httpx
 
-from brain import MAX_TOKENS, PERSONA, Brain
+from jimmy_agent.brain import MAX_TOKENS, PERSONA, Brain
 
 
 class FakeBlock:

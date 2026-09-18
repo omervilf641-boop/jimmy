@@ -14,9 +14,9 @@ import tempfile
 import unittest
 from typing import List
 
-import voice as voice_module
-from jimmy import Jimmy
-from voice import Voice, clean_for_speech, pick_voice_for
+import jimmy_agent.voice as voice_module
+from jimmy_agent import Jimmy
+from jimmy_agent.voice import Voice, clean_for_speech, pick_voice_for
 
 
 class TestTextCleanup(unittest.TestCase):

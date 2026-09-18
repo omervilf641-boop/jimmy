@@ -12,9 +12,9 @@ import tempfile
 import unittest
 from typing import Any, Dict, List
 
-from brain import MAX_TOOL_ROUNDS, Brain
-from learning_engine import LearningEngine
-from tools import (
+from jimmy_agent.brain import MAX_TOOL_ROUNDS, Brain
+from jimmy_agent.learning_engine import LearningEngine
+from jimmy_agent.tools import (
     MAX_LIST_ENTRIES,
     MAX_RESULT_CHARS,
     MAX_SEARCH_HITS,
@@ -371,7 +371,7 @@ class TestToolLoop(ToolboxTestCase):
 
 class TestAgentIntegration(unittest.TestCase):
     def test_tools_are_off_when_requested(self) -> None:
-        from jimmy import Jimmy
+        from jimmy_agent import Jimmy
 
         with tempfile.TemporaryDirectory() as tmpdir:
             agent = Jimmy(memory_file=os.path.join(tmpdir, "m.json"), offline=True, use_tools=False)
@@ -379,7 +379,7 @@ class TestAgentIntegration(unittest.TestCase):
             self.assertIn("off", agent.chat("tools"))
 
     def test_tools_command_lists_them(self) -> None:
-        from jimmy import Jimmy
+        from jimmy_agent import Jimmy
 
         with tempfile.TemporaryDirectory() as tmpdir:
             agent = Jimmy(memory_file=os.path.join(tmpdir, "m.json"), offline=True, root=tmpdir)
@@ -388,7 +388,7 @@ class TestAgentIntegration(unittest.TestCase):
                 self.assertIn(name, response)
 
     def test_tools_command_does_not_pollute_memory(self) -> None:
-        from jimmy import Jimmy
+        from jimmy_agent import Jimmy
 
         with tempfile.TemporaryDirectory() as tmpdir:
             agent = Jimmy(memory_file=os.path.join(tmpdir, "m.json"), offline=True, root=tmpdir)

@@ -14,10 +14,10 @@ import os
 import tempfile
 import unittest
 
-from brain import Brain
-from extractor import extract
-from jimmy import Jimmy
-from learning_engine import SCHEMA_VERSION, LearningEngine
+from jimmy_agent.brain import Brain
+from jimmy_agent.extractor import extract
+from jimmy_agent import Jimmy
+from jimmy_agent.learning_engine import SCHEMA_VERSION, LearningEngine
 
 
 class MemoryTestCase(unittest.TestCase):
@@ -396,6 +396,74 @@ class TestJimmyEndToEnd(MemoryTestCase):
         self.assertEqual(agent.history[1]["role"], "assistant")
 
 
+class TestDefaultMemoryLocation(unittest.TestCase):
+    """An installed `jimmy` is run from anywhere - his memory must not follow the cwd."""
+
+    def test_default_is_in_the_home_folder_not_the_cwd(self) -> None:
+        from jimmy_agent.agent import default_memory_path
+
+        path = default_memory_path()
+        self.assertTrue(os.path.isabs(path), "the default memory path must be absolute")
+        self.assertNotEqual(os.path.dirname(path), os.getcwd())
+
+    def test_jimmy_home_overrides_it(self) -> None:
+        from jimmy_agent.agent import default_memory_path
+
+        original = os.environ.get("JIMMY_HOME")
+        os.environ["JIMMY_HOME"] = "/tmp/jimmy-probe"
+        try:
+            self.assertEqual(default_memory_path(), "/tmp/jimmy-probe/memory.json")
+        finally:
+            if original is None:
+                del os.environ["JIMMY_HOME"]
+            else:
+                os.environ["JIMMY_HOME"] = original
+
+    def test_memory_is_shared_between_working_directories(self) -> None:
+        import subprocess
+        import sys
+
+        repo = os.path.dirname(os.path.abspath(__file__))
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as elsewhere:
+            environment = {**os.environ, "JIMMY_HOME": home, "PYTHONPATH": repo}
+
+            subprocess.run(
+                [sys.executable, "-c",
+                 "from jimmy_agent import Jimmy; Jimmy(offline=True).chat('my name is Omer')"],
+                cwd=repo, env=environment, check=True, capture_output=True,
+            )
+            result = subprocess.run(
+                [sys.executable, "-c",
+                 "from jimmy_agent import Jimmy; print(Jimmy(offline=True).engine.user_name)"],
+                cwd=elsewhere, env=environment, check=True, capture_output=True, text=True,
+            )
+            self.assertEqual(result.stdout.strip(), "Omer", "he must remember you from any folder")
+
+    def test_an_existing_local_memory_is_adopted_once(self) -> None:
+        import json as json_module
+
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as workdir:
+            legacy = os.path.join(workdir, "memory.json")
+            with open(legacy, "w", encoding="utf-8") as handle:
+                json_module.dump({"learned_facts": [{"fact": "an older memory"}]}, handle)
+
+            original_cwd, original_home = os.getcwd(), os.environ.get("JIMMY_HOME")
+            os.environ["JIMMY_HOME"] = home
+            os.chdir(workdir)
+            try:
+                agent = Jimmy(offline=True)
+                facts = [e["fact"] for e in agent.engine.knowledge_base["learned_facts"]]
+                self.assertIn("an older memory", facts)
+                self.assertEqual(agent.adopted_from, legacy)
+                self.assertTrue(os.path.exists(legacy), "the original must not be moved")
+            finally:
+                os.chdir(original_cwd)
+                if original_home is None:
+                    del os.environ["JIMMY_HOME"]
+                else:
+                    os.environ["JIMMY_HOME"] = original_home
+
+
 class TestFootprint(unittest.TestCase):
     """Jimmy has to start fast on an ordinary laptop.
 
@@ -420,7 +488,7 @@ class TestFootprint(unittest.TestCase):
     def test_offline_startup_imports_neither_heavy_dependency(self) -> None:
         output = self._probe(
             "import sys, tempfile, os\n"
-            "from jimmy import Jimmy\n"
+            "from jimmy_agent import Jimmy\n"
             "Jimmy(memory_file=os.path.join(tempfile.mkdtemp(), 'm.json'), offline=True)\n"
             "print('anthropic' in sys.modules, 'edge_tts' in sys.modules)"
         )
@@ -430,7 +498,7 @@ class TestFootprint(unittest.TestCase):
         output = self._probe(
             "import sys, os\n"
             "os.environ['ANTHROPIC_API_KEY'] = 'sk-ant-probe'\n"
-            "from brain import Brain\n"
+            "from jimmy_agent.brain import Brain\n"
             "brain = Brain()\n"
             "print('anthropic' in sys.modules, brain.online)"
         )
@@ -440,7 +508,7 @@ class TestFootprint(unittest.TestCase):
         output = self._probe(
             "import time, tempfile, os\n"
             "start = time.perf_counter()\n"
-            "from jimmy import Jimmy\n"
+            "from jimmy_agent import Jimmy\n"
             "Jimmy(memory_file=os.path.join(tempfile.mkdtemp(), 'm.json'), offline=True)\n"
             "print(int((time.perf_counter() - start) * 1000))"
         )
