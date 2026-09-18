@@ -1,223 +1,356 @@
 """
-Jimmy - The Learning AI Agent
-A smart agent that learns from conversations and grows smarter over time
+Jimmy - a personal AI agent that learns from you and helps you.
+
+Run it:      python jimmy.py
+One-shot:    python jimmy.py --ask "what do you know about me?"
+No API key?  It still runs - see `--offline`.
 """
 
-import os
+from __future__ import annotations
+
+import argparse
+import sys
+from typing import Callable, Dict, List, Optional
+
+from brain import Brain
+from extractor import extract
 from learning_engine import LearningEngine
-from datetime import datetime
+
+BANNER = """
+╔══════════════════════════════════════════╗
+║          🤖  J I M M Y  🤖               ║
+║      Your learning AI companion          ║
+╚══════════════════════════════════════════╝"""
+
+HELP_TEXT = """
+What I understand:
+
+  teach <fact>          Teach me something and I'll keep it
+  learn skill <name>    Give me a new skill (it improves as we use it)
+  forget <thing>        Make me forget it - your memory, your rules
+  forget everything     Wipe my memory completely
+  stats                 My learning statistics
+  progress              My growth, visualised
+  memory                Everything I currently remember
+  export [file]         Write my memory out as Markdown
+  help                  This list
+  exit                  End the session
+
+Hebrew works too: למד / כישור / שכח / סטטיסטיקה / התקדמות / זיכרון / עזרה / יציאה
+Anything else is just conversation - and I learn from that as well.
+"""
+
+EXIT_WORDS = {"exit", "quit", "bye", "goodbye", "יציאה", "ביי", "להתראות"}
+
+
+def _plural(count: int, word: str) -> str:
+    """'1 fact' / '3 facts' - small thing, but Jimmy should read like a person."""
+    return f"{count} {word}" if count == 1 else f"{count} {word}s"
+
 
 class Jimmy:
-    """Main AI Agent class - Jimmy"""
-    
-    def __init__(self, name: str = "Jimmy"):
+    """The agent: a brain, a memory, and a personality tying them together."""
+
+    def __init__(
+        self,
+        name: str = "Jimmy",
+        memory_file: str = "memory.json",
+        offline: bool = False,
+    ) -> None:
         self.name = name
-        self.engine = LearningEngine()
+        self.engine = LearningEngine(memory_file)
+        self.brain = Brain(force_offline=offline)
         self.active = False
-        self.mood = "happy"
-        self.learning_mode = True
-        
-    def greet(self):
-        """Greet the user with personality"""
-        greeting = f"""
-╔════════════════════════════════════════╗
-║  🤖 Welcome to {self.name}! 🤖            ║
-║     Your Learning AI Agent             ║
-╚════════════════════════════════════════╝
+        self.history: List[Dict[str, str]] = []
 
-Hi! I'm {self.name}. I learn from every conversation we have.
-The more you teach me, the smarter I become! 🧠✨
+    # ------------------------------------------------------------------
+    # Presentation
+    # ------------------------------------------------------------------
 
-What would you like to teach me today?
-
-Commands:
-- teach [fact]        - Teach me something
-- learn skill [name]  - Help me acquire a skill
-- show my stats       - See my progress
-- show my progress    - Visualize growth
-- memory              - View my memory
-- exit/quit           - End session
-"""
+    def greet(self) -> str:
+        stats = self.engine.get_learning_stats()
+        who = f", {stats['user_name']}" if stats["user_name"] else ""
+        lines = [
+            BANNER,
+            f"\nHi{who}! I'm {self.name}.",
+            self.brain.status_line(),
+        ]
+        if stats["total_conversations"]:
+            facts = _plural(stats["facts_learned"], "fact")
+            skills = _plural(stats["skills_acquired"], "skill")
+            lines.append(
+                f"📚 We've talked {stats['total_conversations']} times. "
+                f"I know {facts} and {skills}. Score: {stats['learning_score']}/100."
+            )
+        else:
+            lines.append("This is our first conversation - teach me something! 🌱")
+        lines.append("\nType `help` to see what I understand.\n")
+        greeting = "\n".join(lines)
         print(greeting)
         return greeting
-    
-    def chat(self, user_input: str) -> str:
-        """Have a conversation with Jimmy"""
-        
-        if user_input.lower() in ["exit", "quit", "bye"]:
-            return self.goodbye()
-        
-        # Process special commands
-        if user_input.lower().startswith("teach "):
-            return self.learn_from_user(user_input[6:])
-        
-        if user_input.lower().startswith("learn skill "):
-            return self.acquire_skill(user_input[12:])
-        
-        if user_input.lower() == "show my stats":
-            return self.show_stats()
-        
-        if user_input.lower() == "show my progress":
-            return self.show_progress()
-        
-        if user_input.lower() == "memory":
-            return self.engine.get_memory_summary()
-        
-        # Regular conversation with learning
-        response = self.generate_response(user_input)
-        self.engine.add_conversation(user_input, response)
-        
-        return response
-    
-    def learn_from_user(self, fact: str) -> str:
-        """Learn a fact from the user"""
-        self.engine.learn_fact(fact)
-        responses = [
-            f"✅ Great! I've learned: '{fact}' 📝",
-            f"💡 Interesting! I'll remember: '{fact}'",
-            f"🎯 Got it! '{fact}' is now in my memory!",
-            f"📚 Noted! '{fact}' - I'm getting smarter! 🧠"
-        ]
-        response = responses[len(fact) % len(responses)]
-        self.engine.add_conversation(f"teach {fact}", response)
-        return response
-    
-    def acquire_skill(self, skill: str) -> str:
-        """Learn a new skill"""
-        skill_name = skill.split()[0] if skill else "new_skill"
-        self.engine.learn_skill(skill_name, skill)
-        responses = [
-            f"🎓 Awesome! I'm now learning '{skill_name}'! Let's practice! 💪",
-            f"⚡ New skill acquired: '{skill_name}'! I'll improve with practice!",
-            f"🚀 '{skill_name}' is now in my toolkit! Ready to use it!",
-            f"🌟 '{skill_name}' skill unlocked! Let's put it to good use!"
-        ]
-        response = responses[len(skill) % len(responses)]
-        self.engine.add_conversation(f"learn skill {skill}", response)
-        return response
-    
-    def generate_response(self, user_input: str) -> str:
-        """Generate a response based on input"""
-        user_lower = user_input.lower()
-        
-        # Check for similar past conversations
-        similar = self.engine.recall_similar_conversations(user_input)
-        
-        # Simple response generation with personality
-        if any(word in user_lower for word in ["hello", "hi", "hey", "greetings"]):
-            return f"Hey there! 👋 I'm {self.name}, and I'm learning! How can I help?"
-        
-        elif any(word in user_lower for word in ["how are you", "how's it going"]):
-            return f"I'm doing great! 🌟 I've learned from {self.engine.knowledge_base['total_interactions']} conversations so far. How about you?"
-        
-        elif any(word in user_lower for word in ["thanks", "thank you", "appreciate"]):
-            return "You're welcome! 😊 Teaching me helps me grow smarter! 🧠"
-        
-        elif any(word in user_lower for word in ["what can you do", "abilities", "help"]):
-            return f"""
-Here's what I can do:
-📚 Regular chat - I'll remember our conversations
-🎓 'teach [fact]' - Teach me something new
-⚡ 'learn skill [skill]' - Help me acquire new skills
-📊 'show my stats' - See my learning progress
-💾 'memory' - View my memory summary
-🎯 'show my progress' - Visualize my growth
-"""
-        
-        elif any(word in user_lower for word in ["sorry", "mistake", "wrong"]):
-            return "No worries! Everyone makes mistakes. That's how I learn! 🌱 Thanks for the correction!"
-        
-        else:
-            # Generic response
-            responses = [
-                f"That's interesting! 🤔 I'll remember that.",
-                f"Got it! Adding that to my knowledge base. 📝",
-                f"I hear you! This helps me learn. Thanks! 🙏",
-                f"Cool! I'm storing this information. 💾",
-                f"Understood! I'm getting smarter with every conversation! 🚀"
-            ]
-            return responses[hash(user_input) % len(responses)]
-    
-    def show_stats(self) -> str:
-        """Display learning statistics"""
-        stats = self.engine.get_learning_stats()
-        output = f"""
-📊 {self.name}'s Learning Statistics
-{'='*50}
-✅ Total Conversations: {stats['total_conversations']}
-📚 Facts Learned: {stats['facts_learned']}
-🎓 Skills Acquired: {stats['skills_acquired']}
-🧠 Learning Score: {stats['learning_score']}/100
 
-Current Skills: {', '.join(stats['active_skills']) if stats['active_skills'] else 'None yet'}
-{'='*50}
+    # ------------------------------------------------------------------
+    # Conversation
+    # ------------------------------------------------------------------
+
+    def chat(self, user_input: str, on_text: Optional[Callable[[str], None]] = None) -> str:
+        """Handle one message. Commands are handled locally; the rest goes to the brain."""
+        text = user_input.strip()
+        if not text:
+            return ""
+
+        command_response = self._handle_command(text)
+        if command_response is not None:
+            return command_response
+
+        learned = self._learn_passively(text)
+        memory_context = self.engine.build_context(text)
+
+        # Track whether the brain actually streamed, so the trailing note is only
+        # appended to a live stream - otherwise the caller prints the reply itself.
+        did_stream = False
+
+        def tracked(chunk: str) -> None:
+            nonlocal did_stream
+            did_stream = True
+            on_text(chunk)  # type: ignore[misc]
+
+        response = self.brain.respond(
+            text,
+            memory_context=memory_context,
+            history=self.history,
+            on_text=tracked if on_text is not None else None,
+        )
+
+        self.engine.practice_relevant_skills(f"{text} {response}")
+        self.engine.add_conversation(text, response)
+        self.history.append({"role": "user", "content": text})
+        self.history.append({"role": "assistant", "content": response})
+
+        if learned:
+            note = f"\n\n💾 (noted: {learned})"
+            if did_stream:
+                tracked(note)
+            response += note
+        return response
+
+    def _learn_passively(self, text: str) -> str:
+        """Pick up anything the message revealed about the user."""
+        found = extract(text)
+        if found.is_empty():
+            return ""
+
+        if found.name:
+            self.engine.set_user_name(found.name)
+        for key, value in found.preferences.items():
+            self.engine.remember_preference(key, value)
+        for fact in found.facts:
+            self.engine.learn_fact(fact, category="about_user")
+        return found.describe()
+
+    # ------------------------------------------------------------------
+    # Commands
+    # ------------------------------------------------------------------
+
+    def _handle_command(self, text: str) -> Optional[str]:
+        """Return a response for a recognised command, or None to keep chatting."""
+        lowered = text.lower()
+
+        if lowered in EXIT_WORDS:
+            return self.goodbye()
+
+        if lowered in {"help", "?", "עזרה"}:
+            return HELP_TEXT
+
+        if lowered in {"stats", "show my stats", "סטטיסטיקה"}:
+            return self.show_stats()
+
+        if lowered in {"progress", "show my progress", "התקדמות"}:
+            return self.show_progress()
+
+        if lowered in {"memory", "זיכרון"}:
+            return self.engine.get_memory_summary()
+
+        if lowered == "forget everything" or lowered in {"שכח הכל", "תשכח הכל"}:
+            self.engine.forget_everything()
+            self.history.clear()
+            return "🧹 Done - my memory is completely empty. We start fresh."
+
+        for prefix in ("learn skill ", "skill ", "כישור "):
+            if lowered.startswith(prefix):
+                return self.acquire_skill(text[len(prefix):])
+
+        for prefix in ("teach ", "למד ", "תלמד "):
+            if lowered.startswith(prefix):
+                return self.learn_from_user(text[len(prefix):])
+
+        for prefix in ("forget ", "שכח ", "תשכח "):
+            if lowered.startswith(prefix):
+                return self.forget(text[len(prefix):])
+
+        if lowered == "export" or lowered.startswith("export "):
+            target = text[len("export "):].strip() if len(text) > len("export") else ""
+            return self.export(target or "jimmy_memory_export.md")
+
+        return None
+
+    def learn_from_user(self, fact: str) -> str:
+        fact = fact.strip()
+        if not fact:
+            return "Teach me what? Try: `teach the deploy script lives in ops/deploy.sh`"
+
+        entry = self.engine.learn_fact(fact)
+        if entry["times_reinforced"] > 1:
+            return f"✅ I already knew that - now I'm even more sure of it (x{entry['times_reinforced']}). 🧠"
+        return f"✅ Learned: '{fact}' 📝"
+
+    def acquire_skill(self, skill: str) -> str:
+        skill = skill.strip()
+        if not skill:
+            return "Which skill? Try: `learn skill python`"
+
+        skill_name = skill.split()[0]
+        existing = self.engine._find_skill(skill_name) is not None
+        entry = self.engine.learn_skill(skill_name, skill)
+        percent = int(entry["proficiency"] * 100)
+        if existing:
+            return f"💪 Practised '{skill_name}' - proficiency is now {percent}%."
+        return f"🎓 New skill: '{skill_name}' at {percent}%. It'll improve as we use it!"
+
+    def forget(self, target: str) -> str:
+        target = target.strip()
+        if not target:
+            return "Forget what? Try: `forget my old phone number`"
+
+        removed = self.engine.forget(target)
+        total = sum(len(values) for values in removed.values())
+        if not total:
+            return f"🤷 I don't have anything matching '{target}'."
+
+        singular = {"facts": "fact", "skills": "skill", "preferences": "preference"}
+        parts = [
+            _plural(len(values), singular[kind])
+            for kind, values in removed.items()
+            if values
+        ]
+        return f"🧹 Forgotten: {', '.join(parts)}. Gone for good."
+
+    def export(self, path: str) -> str:
+        written = self.engine.export(path)
+        return f"📄 Memory exported to {written}"
+
+    def show_stats(self) -> str:
+        stats = self.engine.get_learning_stats()
+        skills = self.engine.knowledge_base["skills"]
+        skill_line = (
+            ", ".join(f"{s['name']} ({int(s['proficiency'] * 100)}%)" for s in skills)
+            or "none yet"
+        )
+        rule = "=" * 50
+        who = stats["user_name"] or "someone I don't know yet"
+        return f"""
+📊 {self.name}'s Learning Statistics
+{rule}
+✅ Conversations : {stats['total_conversations']}
+📚 Facts learned : {stats['facts_learned']}
+🎓 Skills        : {stats['skills_acquired']}
+🧠 Learning score: {stats['learning_score']}/100
+👤 You are       : {who}
+
+Skills: {skill_line}
+{rule}
 """
-        return output
-    
+
     def show_progress(self) -> str:
-        """Show learning progress visually"""
         score = self.engine.knowledge_base["learning_score"]
-        bar_length = 20
-        filled = int(bar_length * score / 100)
-        bar = "█" * filled + "░" * (bar_length - filled)
-        
-        level = "Beginner 🌱" if score < 25 else "Growing 🌿" if score < 50 else "Competent 🌳" if score < 75 else "Expert 🌲"
-        
-        output = f"""
-🎯 {self.name}'s Learning Progress
+        filled = int(20 * score / 100)
+        bar = "█" * filled + "░" * (20 - filled)
+
+        if score < 25:
+            level = "Beginner 🌱"
+        elif score < 50:
+            level = "Growing 🌿"
+        elif score < 75:
+            level = "Competent 🌳"
+        else:
+            level = "Expert 🌲"
+
+        return f"""
+🎯 {self.name}'s Progress
 {bar} {score}%
 
 Level: {level}
-
-Keep teaching me and I'll keep growing! 📈✨
+Keep teaching me and I'll keep growing! 📈
 """
-        return output
-    
+
     def goodbye(self) -> str:
-        """Say goodbye and save progress"""
-        message = f"""
-👋 Thanks for the great learning session!
-I've grown from our {self.engine.knowledge_base['total_interactions']} conversations.
-See you next time! Keep exploring! 🚀
-
-💾 All memories saved! I'll remember everything! 🧠
+        stats = self.engine.get_learning_stats()
+        who = f", {stats['user_name']}" if stats["user_name"] else ""
+        return f"""
+👋 See you{who}!
+We've talked {stats['total_conversations']} times and I'm at {stats['learning_score']}/100.
+💾 Everything is saved in {self.engine.memory_file} - I'll remember it next time. 🧠
 """
-        return message
-    
-    def interactive_mode(self):
-        """Start interactive conversation mode"""
+
+    # ------------------------------------------------------------------
+    # Interactive loop
+    # ------------------------------------------------------------------
+
+    def interactive_mode(self) -> None:
         self.greet()
         self.active = True
-        
+
         while self.active:
             try:
-                user_input = input(f"\n💬 You: ").strip()
-                
-                if not user_input:
-                    continue
-                
-                response = self.chat(user_input)
-                print(f"\n🤖 {self.name}: {response}")
-                
-                if user_input.lower() in ["exit", "quit", "bye"]:
-                    self.active = False
-                
-            except KeyboardInterrupt:
-                print(f"\n\n{self.goodbye()}")
+                user_input = input("\n💬 You: ").strip()
+            except (KeyboardInterrupt, EOFError):
+                print(f"\n{self.goodbye()}")
                 self.active = False
-            except Exception as e:
-                print(f"❌ Error: {e}")
+                break
+
+            if not user_input:
                 continue
 
+            streamed = False
 
-def main():
-    """Main entry point"""
-    # Create Jimmy
-    jimmy = Jimmy()
-    
-    # Start interactive mode
+            def on_text(chunk: str) -> None:
+                nonlocal streamed
+                if not streamed:
+                    print(f"\n🤖 {self.name}: ", end="", flush=True)
+                    streamed = True
+                print(chunk, end="", flush=True)
+
+            try:
+                response = self.chat(user_input, on_text=on_text)
+            except Exception as exc:  # noqa: BLE001 - the loop must never die
+                print(f"\n❌ Something went wrong: {exc}")
+                continue
+
+            if streamed:
+                print()
+            else:
+                print(f"\n🤖 {self.name}: {response}")
+
+            if user_input.lower() in EXIT_WORDS:
+                self.active = False
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = argparse.ArgumentParser(description="Jimmy - a learning AI agent")
+    parser.add_argument("--memory", default="memory.json", help="path to the memory file")
+    parser.add_argument("--offline", action="store_true", help="never call the Claude API")
+    parser.add_argument("--ask", metavar="MESSAGE", help="ask one thing and exit")
+    args = parser.parse_args(argv)
+
+    jimmy = Jimmy(memory_file=args.memory, offline=args.offline)
+
+    if args.ask:
+        print(jimmy.chat(args.ask))
+        return 0
+
     jimmy.interactive_mode()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

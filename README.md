@@ -1,106 +1,146 @@
-# 🤖 Jimmy - The Learning AI Agent
+# 🤖 Jimmy — The Learning AI Agent
 
-Jimmy is an intelligent AI agent that learns and evolves from your interactions. He's designed to be smart, adaptable, and constantly growing!
+Jimmy is a personal AI agent that learns from **you** and remembers it. Every conversation,
+fact, skill and preference is stored on disk and fed back into his next reply — so the more
+you talk to him, the more useful he actually gets.
 
-## ✨ Features
+He runs on **Claude** when credentials are available, and keeps working without them.
 
-- 🧠 **Learning System**: Jimmy learns from every conversation and stores knowledge
-- 💾 **Memory**: Remembers previous interactions and builds on them
-- 🎯 **Task Automation**: Can help with various tasks and grow smarter over time
-- 📊 **Progress Tracking**: Visualize Jimmy's learning journey
-- 🔄 **Continuous Improvement**: Gets better with each interaction
+---
 
-## 🚀 Getting Started
+## ✨ What Jimmy does
 
-### Requirements
-- Python 3.8+
-- pip (Python package manager)
+| | |
+|---|---|
+| 🧠 **Real reasoning** | Powered by the Claude API (`claude-opus-5`), streamed to your terminal |
+| 💾 **Persistent memory** | Everything lives in `memory.json` and survives restarts |
+| 🎯 **Memory that matters** | Relevant facts, preferences and past exchanges are injected before every reply |
+| 🌱 **Passive learning** | He picks up your name, job and preferences from normal conversation |
+| 🎓 **Skills that grow** | Proficiency rises each time a skill actually gets used |
+| 🧹 **Your memory, your rules** | `forget` anything, or wipe it all |
+| 💤 **Offline mode** | No API key? He still remembers, learns and responds |
+| 🌍 **Bilingual** | Hebrew and English, commands included |
 
-### Installation
+---
+
+## 🚀 Getting started
 
 ```bash
-# Clone the repository
 git clone https://github.com/omervilf641-boop/jimmy.git
 cd jimmy
-
-# Install dependencies
 pip install -r requirements.txt
-```
 
-### Running Jimmy
-
-```bash
+export ANTHROPIC_API_KEY="sk-ant-..."   # optional - see Offline mode below
 python jimmy.py
 ```
 
-## 📚 How Jimmy Learns
+### Command-line options
 
-1. **Conversations**: Talk to Jimmy and he learns from your messages
-2. **Knowledge Base**: He stores and recalls information
-3. **Skill Development**: He improves his abilities over time
-4. **Adaptation**: He adjusts his responses based on your feedback
-
-## 📁 Project Structure
-
-```
-jimmy/
-├── jimmy.py              # Main agent file
-├── learning_engine.py    # Learning and memory system
-├── memory.json          # Knowledge database
-├── requirements.txt     # Dependencies
-└── README.md            # This file
+```bash
+python jimmy.py                          # interactive chat
+python jimmy.py --ask "what do you know about me?"   # one question, then exit
+python jimmy.py --offline                # never call the API
+python jimmy.py --memory work.json       # keep separate memories
 ```
 
-## 🎮 Example Usage
-
-```python
-from jimmy import Jimmy
-
-# Create Jimmy
-agent = Jimmy()
-
-# Start learning!
-agent.chat("Hello Jimmy! Learn something new today.")
-```
+---
 
 ## 💬 Commands
 
-- `teach [fact]` - Teach Jimmy a new fact
-- `learn skill [skill]` - Help Jimmy acquire a new skill
-- `show my stats` - See Jimmy's learning statistics
-- `show my progress` - Visualize learning progress
-- `memory` - View memory summary
-- `exit` or `quit` - End the conversation
+| Command | What it does |
+|---|---|
+| `teach <fact>` | Store a fact. Teaching it twice reinforces it instead of duplicating it |
+| `learn skill <name>` | Acquire a skill — it starts at 50% and improves with use |
+| `forget <thing>` | Remove any fact, skill or preference matching it |
+| `forget everything` | Wipe his memory completely |
+| `stats` | Conversations, facts, skills, learning score |
+| `progress` | The growth bar and current level |
+| `memory` | Everything Jimmy currently remembers |
+| `export [file]` | Write his memory out as readable Markdown |
+| `help` | The command list |
+| `exit` | End the session (everything is already saved) |
 
-## 🌟 Cool Features
+Hebrew aliases: `למד` · `כישור` · `שכח` · `סטטיסטיקה` · `התקדמות` · `זיכרון` · `עזרה` · `יציאה`
 
-- Tracks learning progress
-- Stores all interactions in memory
-- Suggests improvements
-- Provides insights about what it learned
-- Improves skill proficiency over time
+Anything that isn't a command is just conversation — and Jimmy learns from that too.
 
-## 🎯 Example Session
+---
+
+## 🧠 How the memory works
 
 ```
-💬 You: Hi Jimmy!
-🤖 Jimmy: Hey there! 👋 I'm Jimmy, and I'm learning! How can I help?
-
-💬 You: teach Python is a programming language
-🤖 Jimmy: ✅ Great! I've learned: 'Python is a programming language' 📝
-
-💬 You: learn skill coding
-🤖 Jimmy: 🎓 Awesome! I'm now learning 'coding'! Let's practice! 💪
-
-💬 You: show my stats
-🤖 Jimmy: [Displays learning statistics]
+your message
+   ↓
+passive extraction     ← picks up name / job / preferences automatically
+   ↓
+recall                 ← relevant facts, preferences and past exchanges, ranked
+   ↓
+Claude                 ← memory injected as a mid-conversation system message
+   ↓
+skill practice         ← any skill mentioned gets a proficiency bump
+   ↓
+saved to memory.json   ← atomic write, survives restarts
 ```
+
+**Learning score (0–100):** conversations 40% · facts 30% · skills 30%.
+Levels: Beginner 🌱 → Growing 🌿 → Competent 🌳 → Expert 🌲
+
+---
+
+## 💤 Offline mode
+
+Without an `ANTHROPIC_API_KEY` (or without the `anthropic` package), Jimmy tells you so and
+switches to rule-based replies. **Everything else is unchanged** — memory, facts, skills,
+preferences and commands all work identically. He will not bluff an answer he can't reason
+out; he says he's offline instead.
+
+If credentials are rejected mid-session, he switches to offline mode without losing anything.
+
+---
+
+## 📁 Project structure
+
+```
+jimmy/
+├── jimmy.py               # the agent, CLI and command handling
+├── brain.py               # Claude API integration + offline fallback
+├── learning_engine.py     # memory, facts, skills, recall, persistence
+├── extractor.py           # passive learning from ordinary conversation
+├── test_jimmy.py          # memory, learning and end-to-end tests
+├── test_brain_online.py   # online request shape and failure modes
+├── PROMPT.md              # the build brief this project was built from
+├── requirements.txt       # one dependency: anthropic
+└── memory.json            # created on first run — gitignored, it's yours
+```
+
+---
+
+## 🧪 Tests
+
+```bash
+python -m unittest discover -p "test_*.py"
+```
+
+61 tests, no API key and no network required — the brain is stubbed out, so every test
+exercises real memory behaviour deterministically. They cover persistence across restarts,
+schema migration from older memory files, corrupt-file recovery, duplicate handling, skill
+proficiency growth, forgetting, recall ranking, passive extraction (Hebrew and English),
+offline replies, the exact request sent to the API, and every failure branch around it.
+
+---
+
+## 🔒 Privacy
+
+`memory.json` holds your actual conversations. It is gitignored and never leaves your
+machine except as context in your own Claude API calls. `forget` and `export` are there so
+you stay in control of it.
+
+---
 
 ## 📝 License
 
-MIT License - Feel free to use and modify!
+MIT — use it, change it, make it yours.
 
 ---
 
 **Made with ❤️ for learning and growth**
-**Created on 2026-08-18**

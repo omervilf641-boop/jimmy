@@ -1,0 +1,17 @@
+# Jimmy's memory is personal - it never belongs in git
+memory.json
+memory.json.corrupt-*
+*.memory.json
+jimmy_memory_export.md
+
+# Secrets
+.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
