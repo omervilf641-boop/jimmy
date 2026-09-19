@@ -203,9 +203,15 @@ def synthesize(text, lang=None):
     """Return WAV bytes for the given text, in the voice that fits the language."""
     import io as _io
     import wave
+    # Load the voice before opening the wave file. Inside the `with`, a missing
+    # voice was closing an empty wave, and wave's own "# channels not specified"
+    # replaced the real error: /tts answered 500 with that instead of 503 with
+    # the path it could not find. A folder that arrived without voices/ then
+    # reported nothing a person could act on.
+    voice = get_voice(lang)
     buf = _io.BytesIO()
     with wave.open(buf, "wb") as wav:
-        get_voice(lang).synthesize_wav(text, wav)
+        voice.synthesize_wav(text, wav)
     return buf.getvalue()
 
 
