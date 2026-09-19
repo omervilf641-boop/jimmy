@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Jarvis</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="stars"></canvas>
+<div id="sweep"></div>
+<div class="bracket tl"></div><div class="bracket tr"></div>
+<div class="bracket bl"></div><div class="bracket br"></div>
+
+<header id="titlebar" class="layer">
+  <div class="brand">
+    <div class="brand-dot"></div>
+    <span class="brand-name">J.A.R.V.I.S</span>
+  </div>
+  <div class="spacer"></div>
+  <button id="overlay-btn" class="win-btn" title="Overlay mode — stay on top of games (Ctrl+Shift+O)">▣</button>
+  <button id="min-btn" class="win-btn" title="Minimize">─</button>
+  <button id="close-btn" class="win-btn danger" title="Close to tray">✕</button>
+</header>
+
+<div id="telemetry" class="layer">
+  <div class="tele"><span class="k">cpu</span><span class="v" id="t-cpu">--</span></div>
+  <div class="tele"><span class="k">mem</span><span class="v" id="t-mem">--</span></div>
+  <div class="tele"><span class="k">core</span><span class="v" id="t-model">--</span></div>
+  <div class="spacer"></div>
+  <div class="tele"><span class="v" id="t-clock">--:--</span></div>
+</div>
+
+<nav id="toolbar" class="layer">
+  <button id="lang-toggle" class="chip" title="Switch language / החלף שפה">🌐 <span id="lang-label">EN</span></button>
+  <button id="wake-toggle" class="chip" title="Listen in the background for the wake word">👂 <span id="wake-label">Hey Jarvis</span></button>
+  <button id="convo-toggle" class="chip" title="Keep listening after each reply">🔁 Conversation</button>
+  <button id="clear-btn" class="chip" title="Clear the conversation">🗑</button>
+  <div class="spacer" style="flex:1"></div>
+  <div id="status"><span class="dot"></span><span id="status-text">connecting…</span></div>
+</nav>
+
+<div id="orb-area" class="layer">
+  <div id="orb" title="Click to talk — or press Ctrl+Shift+J from anywhere">
+    <div class="ring r0"></div>
+    <div class="ring r4"></div>
+    <div class="ring r1"></div>
+    <div class="ring r2"></div>
+    <div class="ring r3"></div>
+    <div id="level-ring"></div>
+    <div class="core"></div>
+  </div>
+  <div id="orb-hint">Click the core to talk</div>
+  <div id="voice-warning"></div>
+</div>
+
+<main id="chat" class="layer">
+  <div id="suggestions">
+    <button class="suggestion" data-say="What's my PC status?">💻 How's my PC doing?</button>
+    <button class="suggestion" data-say="Remind me in 10 minutes to take a break">⏰ Remind me in 10 minutes</button>
+    <button class="suggestion" data-say="Take a note: ">📝 Take a note</button>
+    <button class="suggestion" data-say="Start Minecraft">⛏ Start Minecraft</button>
+  </div>
+</main>
+
+<footer id="input-bar" class="layer">
+  <button id="mic-btn" class="icon-btn" title="Voice input">🎤</button>
+  <input id="text-input" type="text" placeholder="speak or type…" autocomplete="off" spellcheck="false">
+  <button id="send-btn" class="icon-btn">SEND</button>
+  <button id="speak-toggle" class="icon-btn" title="Read replies aloud">🔊</button>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

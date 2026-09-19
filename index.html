@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ג'רוויס</title>
+<style>
+  :root {
+    --bg: #04070d;
+    --panel: #0a121e;
+    --accent: #3ed3ff;
+    --accent2: #8a6cff;
+    --accent-dim: #16607a;
+    --text: #dcebf5;
+    --muted: #5f7585;
+    --user-bubble: #12253a;
+    --jarvis-bubble: #0c1a2a;
+    --danger: #ff6b6b;
+    --ok: #46e695;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", system-ui, sans-serif;
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  #stars { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
+  header, #orb-area, #chat, #input-bar { position: relative; z-index: 1; }
+
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 22px;
+    border-bottom: 1px solid rgba(62, 211, 255, 0.12);
+    background: rgba(6, 12, 20, 0.75);
+    backdrop-filter: blur(6px);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand .logo {
+    width: 26px; height: 26px; border-radius: 50%;
+    background: radial-gradient(circle at 50% 40%, var(--accent), #0a3a52 75%);
+    box-shadow: 0 0 12px var(--accent);
+  }
+  .brand h1 {
+    font-size: 1.1rem; font-weight: 700; letter-spacing: 3px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .header-controls { display: flex; align-items: center; gap: 10px; }
+  #status {
+    font-size: 0.75rem; color: var(--muted);
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 12px; border-radius: 99px;
+    border: 1px solid rgba(62, 211, 255, 0.15);
+    background: rgba(10, 20, 32, 0.6);
+  }
+  #status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); transition: background 0.3s; }
+  #status.online .dot { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .pill-btn {
+    font-size: 0.75rem; padding: 5px 12px; border-radius: 99px;
+    background: rgba(10, 20, 32, 0.6); color: var(--muted);
+    border: 1px solid rgba(62, 211, 255, 0.15); cursor: pointer;
+    font-family: inherit; transition: all 0.2s;
+  }
+  .pill-btn:hover { color: var(--accent); border-color: var(--accent-dim); }
+  .pill-btn.active { color: #05222e; background: var(--accent); border-color: var(--accent); box-shadow: 0 0 10px rgba(62, 211, 255, 0.5); }
+
+  /* ---------- Arc Reactor orb ---------- */
+  #orb-area { display: flex; flex-direction: column; align-items: center; padding: 20px 0 8px; flex-shrink: 0; }
+  #orb {
+    width: 130px; height: 130px; border-radius: 50%; cursor: pointer; position: relative;
+    display: flex; align-items: center; justify-content: center; user-select: none;
+  }
+  #orb .ring { position: absolute; border-radius: 50%; border: 1.5px solid transparent; }
+  #orb .r1 {
+    inset: 0;
+    border-color: rgba(62, 211, 255, 0.35);
+    border-top-color: var(--accent);
+    animation: spin 6s linear infinite;
+  }
+  #orb .r2 {
+    inset: 12px;
+    border-color: rgba(138, 108, 255, 0.25);
+    border-bottom-color: var(--accent2);
+    animation: spin 4s linear infinite reverse;
+  }
+  #orb .r3 {
+    inset: 24px;
+    border: 1.5px dashed rgba(62, 211, 255, 0.3);
+    animation: spin 14s linear infinite;
+  }
+  #orb .core {
+    width: 52px; height: 52px; border-radius: 50%;
+    background: radial-gradient(circle at 50% 42%, #eafcff 0%, var(--accent) 35%, #0b4a66 85%);
+    box-shadow: 0 0 24px var(--accent), 0 0 70px rgba(62, 211, 255, 0.35);
+    transition: transform 0.2s ease;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #orb.listening .core { animation: pulse 1s infinite ease-in-out; }
+  #orb.listening .r1 { animation-duration: 1.4s; }
+  #orb.thinking .core { animation: breathe 0.8s infinite ease-in-out; }
+  #orb.thinking .r2 { animation-duration: 0.8s; }
+  #orb.speaking .core { animation: talk 0.3s infinite ease-in-out; }
+  @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.3); } }
+  @keyframes breathe { 0%,100% { transform: scale(1); opacity: 1; } 50% { transform: scale(0.82); opacity: 0.75; } }
+  @keyframes talk { 0%,100% { transform: scaleY(1); } 50% { transform: scaleY(0.65); } }
+  #orb-hint { margin-top: 12px; font-size: 0.8rem; color: var(--muted); min-height: 1.2em; text-align: center; padding: 0 20px; }
+
+  #voice-warning {
+    display: none; margin: 8px 20px 0; padding: 9px 14px;
+    background: rgba(255, 180, 60, 0.08); border: 1px solid rgba(255, 180, 60, 0.35);
+    border-radius: 10px; font-size: 0.8rem; color: #ffcf87; text-align: center;
+  }
+
+  /* ---------- chat ---------- */
+  #chat { flex: 1; overflow-y: auto; padding: 14px 20px; display: flex; flex-direction: column; gap: 10px; scroll-behavior: smooth; }
+  #chat::-webkit-scrollbar { width: 8px; }
+  #chat::-webkit-scrollbar-thumb { background: #16283a; border-radius: 4px; }
+  .msg {
+    max-width: 76%; padding: 10px 15px; border-radius: 16px;
+    line-height: 1.6; font-size: 0.95rem;
+    white-space: pre-wrap; word-wrap: break-word;
+    animation: fadeUp 0.25s ease;
+  }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  .msg.user {
+    align-self: flex-start;
+    background: linear-gradient(135deg, var(--user-bubble), #0e1c2e);
+    border: 1px solid #1f3c58; border-bottom-right-radius: 5px;
+  }
+  .msg.jarvis {
+    align-self: flex-end;
+    background: linear-gradient(135deg, var(--jarvis-bubble), #0a1521);
+    border: 1px solid rgba(62, 211, 255, 0.18); border-bottom-left-radius: 5px;
+  }
+  .msg.jarvis::before {
+    content: "◈ ג'רוויס"; display: block; font-size: 0.68rem;
+    color: var(--accent); margin-bottom: 4px; letter-spacing: 1px;
+  }
+  .msg.tool-note {
+    align-self: center; max-width: 90%;
+    background: rgba(70, 230, 149, 0.06); border: 1px solid rgba(70, 230, 149, 0.25);
+    color: #9de8c0; font-size: 0.78rem; padding: 6px 14px; border-radius: 99px;
+  }
+  .msg.error { border-color: var(--danger); color: #f5b5b5; }
+
+  /* ---------- input ---------- */
+  #input-bar {
+    display: flex; gap: 10px; padding: 14px 20px 18px;
+    border-top: 1px solid rgba(62, 211, 255, 0.12);
+    background: rgba(6, 12, 20, 0.75); backdrop-filter: blur(6px);
+  }
+  #text-input {
+    flex: 1; background: var(--panel);
+    border: 1px solid #1c3040; border-radius: 12px;
+    color: var(--text); padding: 12px 16px; font-size: 1rem;
+    outline: none; font-family: inherit; transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  #text-input:focus { border-color: var(--accent-dim); box-shadow: 0 0 0 3px rgba(62, 211, 255, 0.08); }
+  .bar-btn {
+    background: var(--panel); color: var(--text);
+    border: 1px solid #1c3040; border-radius: 12px;
+    padding: 0 16px; font-size: 1.1rem; cursor: pointer;
+    font-family: inherit; transition: all 0.2s;
+  }
+  .bar-btn:hover { border-color: var(--accent-dim); color: var(--accent); }
+  .bar-btn.primary { background: linear-gradient(135deg, var(--accent-dim), #1a4a75); font-size: 1rem; padding: 0 24px; }
+  .bar-btn.primary:hover { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #05222e; }
+  .bar-btn.on { background: var(--accent); color: #05222e; border-color: var(--accent); box-shadow: 0 0 12px rgba(62, 211, 255, 0.5); }
+  .bar-btn.off { opacity: 0.4; }
+</style>
+</head>
+<body>
+<canvas id="stars"></canvas>
+
+<header>
+  <div class="brand"><div class="logo"></div><h1>JARVIS</h1></div>
+  <div class="header-controls">
+    <button id="lang-toggle" class="pill-btn" title="החלף שפה / Switch language">🌐 <span id="lang-label">EN</span></button>
+    <button id="wake-toggle" class="pill-btn" title="הקשבה רציפה — אמור &quot;היי ג'רוויס&quot; כדי להעיר אותו">👂 <span id="wake-label">Hey Jarvis</span></button>
+    <button id="convo-toggle" class="pill-btn" title="אחרי שג'רוויס עונה — הוא חוזר להקשיב אוטומטית">🔁 מצב שיחה</button>
+    <button id="clear-btn" class="pill-btn" title="נקה את השיחה">🗑 נקה</button>
+    <div id="status"><span class="dot"></span><span id="status-text">מתחבר…</span></div>
+  </div>
+</header>
+
+<div id="orb-area">
+  <div id="orb" title="לחץ כדי לדבר / לעצור"><div class="ring r1"></div><div class="ring r2"></div><div class="ring r3"></div><div class="core"></div></div>
+  <div id="orb-hint">לחץ על הליבה כדי לדבר, או כתוב למטה</div>
+  <div id="voice-warning"></div>
+</div>
+
+<div id="chat"></div>
+
+<div id="input-bar">
+  <button id="mic-btn" class="bar-btn" title="הקלטה קולית">🎤</button>
+  <input id="text-input" type="text" placeholder="כתוב הודעה לג'רוויס…" autocomplete="off">
+  <button id="send-btn" class="bar-btn primary">שלח</button>
+  <button id="speak-toggle" class="bar-btn" title="הקראה קולית">🔊</button>
+</div>
+
+<script>
+const OLLAMA = "http://localhost:11434";
+// qwen2.5 reliably emits tool calls; aya-expanse writes nicer Hebrew but returns
+// empty responses when tools are attached, so it can't drive the Minecraft bot.
+const MODEL = localStorage.getItem("jarvis-model") || "qwen2.5:7b";
+const SYSTEM_PROMPT_EN = `You are Jarvis, a smart personal assistant running locally on the user's Windows PC.
+Always answer in English, briefly and in a friendly tone. Your replies are read aloud, so write flowing text — no lists, no emoji, no Markdown.
+You have real tools on this computer. When you need a tool, output only a single-line JSON: {"name": "tool_name", "arguments": {...}} with no other text.
+Tools: get_time (date and time), open_app (arguments: {"app": one of notepad/calculator/paint/explorer/chrome/edge/settings/camera}), open_url ({"url": full address}), search_web ({"query": text}), system_stats (CPU, memory, battery, disk), add_note ({"text": the note}), read_notes, clear_notes (only on explicit request), set_timer ({"minutes": number, "message": what to remind}), volume ({"action": up/down/mute/unmute, "steps": number}), screenshot, lock_computer (only on explicit request).
+After a tool runs you get its result — then tell the user briefly what you did or found.
+
+Minecraft: you control your own bot in a live world. mc_connect (join), mc_status (state), mc_do (one action), mc_skills (what you know), mc_run_skill (run a skill), mc_teach (learn a new skill).
+The primitive actions for mc_do are: say, come, follow, stop, goto, collect, craft, place, equip, attack, eat, look_around, inventory.
+Always send flat fields to mc_do, never a nested object. Exact examples:
+Chop three logs: {"name": "mc_do", "arguments": {"action": "collect", "block": "oak_log", "count": 3}}
+Come to the player: {"name": "mc_do", "arguments": {"action": "come"}}
+Craft a pickaxe: {"name": "mc_do", "arguments": {"action": "craft", "item": "wooden_pickaxe", "count": 1}}
+To teach a skill always use mc_teach with a plain-text recipe, never mc_learn:
+{"name": "mc_teach", "arguments": {"name": "make a pickaxe", "recipe": "collect oak_log 3; craft oak_planks 4; craft stick 4; craft crafting_table 1; craft wooden_pickaxe 1"}}
+Skills are saved permanently and can be re-run by name with mc_run_skill. Use the exact saved name — call mc_skills first if unsure.`;
+
+const SYSTEM_PROMPT_HE = `אתה ג'רוויס, עוזר אישי חכם שרץ מקומית על מחשב Windows של המשתמש.
+ענה תמיד בעברית תקינה בלבד, בקצרה ובטון חברותי. לעולם אל תערבב שפות אחרות. התשובות מוקראות בקול — כתוב טקסט זורם, בלי רשימות, בלי אימוג'י ובלי Markdown.
+יש לך כלים אמיתיים על המחשב. כשצריך כלי, כתוב אך ורק JSON בשורה אחת בפורמט: {"name": "שם_הכלי", "arguments": {...}} בלי טקסט נוסף.
+הכלים: get_time (שעה ותאריך), open_app (פתיחת אפליקציה, arguments: {"app": אחד מ-notepad/calculator/paint/explorer/chrome/edge/settings/camera}), open_url (arguments: {"url": כתובת מלאה}), search_web (חיפוש בגוגל, arguments: {"query": טקסט}), system_stats (מצב המחשב: מעבד, זיכרון, סוללה, דיסק), add_note (שמירת פתק, arguments: {"text": הפתק}), read_notes (קריאת הפתקים), clear_notes (מחיקת כל הפתקים — רק אם המשתמש ביקש במפורש), set_timer (תזכורת, arguments: {"minutes": מספר, "message": מה להזכיר}), volume (עוצמת שמע, arguments: {"action": up/down/mute/unmute, "steps": מספר}), screenshot (צילום מסך), lock_computer (נעילת המחשב — רק אם המשתמש ביקש במפורש).
+אחרי שכלי רץ תקבל את התוצאה — ספר למשתמש בקצרה ובעברית מה עשית או מה גילית.
+
+מיינקראפט: יש לך בוט משלך בעולם. mc_connect (התחברות), mc_status (מצב), mc_do (פעולה בודדת), mc_skills (מה אתה יודע), mc_run_skill (הפעלת מיומנות), mc_learn (לימוד מיומנות חדשה).
+הפעולות הבסיסיות ל-mc_do הן באנגלית בלבד: say, come, follow, stop, goto, collect, craft, place, equip, attack, eat, look_around, inventory.
+ל-mc_do תמיד שלח שדות שטוחים, בלי אובייקט מקונן. דוגמאות מדויקות:
+לכרות שלושה עצים: {"name": "mc_do", "arguments": {"action": "collect", "block": "עץ", "count": 3}}
+לבוא אל השחקן: {"name": "mc_do", "arguments": {"action": "come"}}
+ליצור מכוש: {"name": "mc_do", "arguments": {"action": "craft", "item": "מכוש", "count": 1}}
+לבדוק מה בתיק: {"name": "mc_do", "arguments": {"action": "inventory"}}
+כשהמשתמש מלמד אותך משימה מורכבת, השתמש תמיד ב-mc_teach עם מתכון טקסט פשוט — לא ב-mc_learn.
+דוגמה ללימוד מיומנות: {"name": "mc_teach", "arguments": {"name": "להכין מכוש", "recipe": "collect עץ 3; craft לוחות 4; craft מקלות 4; craft שולחן יצירה 1; craft מכוש 1"}}
+אחרי שלמדת מיומנות היא נשמרת לתמיד, ואפשר להריץ אותה שוב עם mc_run_skill לפי השם.
+כשאתה מריץ מיומנות, השתמש בשם המדויק בעברית כפי שהוא נשמר — לעולם אל תתעתק אותו לאותיות לטיניות. אם אינך בטוח בשם, קרא קודם ל-mc_skills.`;
+
+// English is the default: tool-calling is markedly more reliable, and the
+// browser has an English voice installed while it has no Hebrew one.
+let lang = localStorage.getItem("jarvis-lang") || "en";
+const SYSTEM_PROMPT = lang === "he" ? SYSTEM_PROMPT_HE : SYSTEM_PROMPT_EN;
+const SPEECH_LANG = lang === "he" ? "he-IL" : "en-US";
+
+const TOOL_DEFS = [
+  { type: "function", function: { name: "get_time", description: "מחזיר את התאריך, השעה והיום בשבוע הנוכחיים", parameters: { type: "object", properties: {}, required: [] } } },
+  { type: "function", function: { name: "open_app", description: "פותח אפליקציה במחשב", parameters: { type: "object", properties: { app: { type: "string", enum: ["notepad","calculator","paint","explorer","chrome","edge","settings","camera"], description: "האפליקציה לפתיחה" } }, required: ["app"] } } },
+  { type: "function", function: { name: "open_url", description: "פותח כתובת אינטרנט בדפדפן", parameters: { type: "object", properties: { url: { type: "string", description: "כתובת מלאה כולל https://" } }, required: ["url"] } } },
+  { type: "function", function: { name: "search_web", description: "מחפש בגוגל ופותח את תוצאות החיפוש בדפדפן", parameters: { type: "object", properties: { query: { type: "string", description: "מה לחפש" } }, required: ["query"] } } },
+  { type: "function", function: { name: "system_stats", description: "מחזיר את מצב המחשב: עומס מעבד, זיכרון, סוללה ומקום פנוי בדיסק", parameters: { type: "object", properties: {}, required: [] } } },
+  { type: "function", function: { name: "add_note", description: "שומר פתק לרשימת הפתקים של המשתמש", parameters: { type: "object", properties: { text: { type: "string", description: "תוכן הפתק" } }, required: ["text"] } } },
+  { type: "function", function: { name: "read_notes", description: "מחזיר את הפתקים השמורים של המשתמש", parameters: { type: "object", properties: {}, required: [] } } },
+  { type: "function", function: { name: "clear_notes", description: "מוחק את כל הפתקים — רק לבקשה מפורשת של המשתמש", parameters: { type: "object", properties: {}, required: [] } } },
+  { type: "function", function: { name: "set_timer", description: "קובע תזכורת שתישמע בעוד מספר דקות", parameters: { type: "object", properties: { minutes: { type: "number", description: "בעוד כמה דקות" }, message: { type: "string", description: "מה להזכיר" } }, required: ["minutes"] } } },
+  { type: "function", function: { name: "volume", description: "שולט בעוצמת השמע של המחשב", parameters: { type: "object", properties: { action: { type: "string", enum: ["up","down","mute","unmute"] }, steps: { type: "number", description: "כמה צעדים (ברירת מחדל 5)" } }, required: ["action"] } } },
+  { type: "function", function: { name: "screenshot", description: "מצלם את המסך ושומר בתמונות", parameters: { type: "object", properties: {}, required: [] } } },
+  { type: "function", function: { name: "lock_computer", description: "נועל את המחשב — רק לבקשה מפורשת של המשתמש", parameters: { type: "object", properties: {}, required: [] } } },
+  { type: "function", function: { name: "mc_connect", description: "מחבר את הבוט של ג'רוויס לעולם המיינקראפט", parameters: { type: "object", properties: {}, required: [] } } },
+  { type: "function", function: { name: "mc_status", description: "מצב הבוט במיינקראפט: חיים, רעב, מיקום, תיק, מיומנויות", parameters: { type: "object", properties: {}, required: [] } } },
+  { type: "function", function: { name: "mc_do", description: "מבצע פעולה אחת במיינקראפט. שדות שטוחים — בלי אובייקטים מקוננים.", parameters: { type: "object", properties: {
+    action: { type: "string", enum: ["say","come","follow","stop","goto","collect","craft","place","equip","attack","eat","look_around","inventory"], description: "שם הפעולה באנגלית בלבד" },
+    block: { type: "string", description: "שם הבלוק לכרייה, למשל עץ או אבן" },
+    item: { type: "string", description: "שם הפריט ליצירה או להחזקה" },
+    count: { type: "number", description: "כמות" },
+    mob: { type: "string", description: "סוג היצור לתקיפה" },
+    text: { type: "string", description: "טקסט לצ'אט" },
+    x: { type: "number" }, y: { type: "number" }, z: { type: "number" },
+  }, required: ["action"] } } },
+  { type: "function", function: { name: "mc_learn", description: "מלמד את הבוט מיומנות חדשה — רצף פעולות שנשמר לתמיד", parameters: { type: "object", properties: { name: { type: "string", description: "שם המיומנות בעברית" }, description: { type: "string" }, steps: { type: "array", description: "רשימת צעדים, כל אחד {\"action\":\"...\",\"args\":{...}}", items: { type: "object" } } }, required: ["name","steps"] } } },
+  { type: "function", function: { name: "mc_teach", description: "מלמד את הבוט מיומנות חדשה ממתכון טקסט פשוט. השתמש בזה תמיד ללימוד מיומנות.", parameters: { type: "object", properties: { name: { type: "string", description: "שם המיומנות בעברית" }, recipe: { type: "string", description: "צעדים מופרדים בנקודה-פסיק, כל צעד: פעולה מטרה כמות. למשל: collect עץ 3; craft לוחות 4; craft מקלות 4" } }, required: ["name","recipe"] } } },
+  { type: "function", function: { name: "mc_run_skill", description: "מריץ מיומנות שהבוט למד", parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] } } },
+  { type: "function", function: { name: "mc_skills", description: "מחזיר את רשימת המיומנויות שהבוט למד ואת הפעולות הבסיסיות", parameters: { type: "object", properties: {}, required: [] } } },
+];
+const TOOL_LABELS = {
+  get_time: "🕐 בודק שעה", open_app: "🚀 פותח אפליקציה", open_url: "🌐 פותח אתר",
+  search_web: "🔎 מחפש בגוגל", system_stats: "💻 בודק את המחשב",
+  add_note: "📝 שומר פתק", read_notes: "📖 קורא פתקים", clear_notes: "🗑 מוחק פתקים",
+  set_timer: "⏰ קובע תזכורת", volume: "🔊 משנה עוצמה", screenshot: "📸 מצלם מסך",
+  lock_computer: "🔒 נועל את המחשב",
+  mc_connect: "⛏ מתחבר למיינקראפט", mc_status: "⛏ בודק מצב בעולם", mc_do: "⛏ פועל בעולם",
+  mc_learn: "🧠 לומד מיומנות חדשה", mc_teach: "🧠 לומד מיומנות חדשה",
+  mc_run_skill: "🧠 מפעיל מיומנות", mc_skills: "🧠 בודק מה הוא יודע",
+};
+
+const chatEl = document.getElementById("chat");
+const orb = document.getElementById("orb");
+const orbHint = document.getElementById("orb-hint");
+const statusEl = document.getElementById("status");
+const statusText = document.getElementById("status-text");
+const input = document.getElementById("text-input");
+const sendBtn = document.getElementById("send-btn");
+const micBtn = document.getElementById("mic-btn");
+const speakToggle = document.getElementById("speak-toggle");
+const convoToggle = document.getElementById("convo-toggle");
+const clearBtn = document.getElementById("clear-btn");
+const voiceWarning = document.getElementById("voice-warning");
+
+let history = [{ role: "system", content: SYSTEM_PROMPT }];
+let busy = false;
+let speakEnabled = localStorage.getItem("jarvis-speak") !== "off";
+let convoMode = localStorage.getItem("jarvis-convo") === "on";
+let ollamaOnline = false;
+
+/* ---------- starfield background ---------- */
+(() => {
+  const c = document.getElementById("stars"), ctx = c.getContext("2d");
+  let stars = [];
+  function resize() {
+    c.width = innerWidth; c.height = innerHeight;
+    stars = Array.from({ length: 90 }, () => ({
+      x: Math.random() * c.width, y: Math.random() * c.height,
+      r: Math.random() * 1.4 + 0.3, s: Math.random() * 0.25 + 0.05,
+      p: Math.random() * Math.PI * 2,
+    }));
+  }
+  resize(); addEventListener("resize", resize);
+  (function draw(t) {
+    ctx.clearRect(0, 0, c.width, c.height);
+    for (const st of stars) {
+      const a = 0.25 + 0.55 * Math.abs(Math.sin(t / 2200 + st.p));
+      ctx.fillStyle = `rgba(90, 190, 255, ${a})`;
+      ctx.beginPath(); ctx.arc(st.x, st.y, st.r, 0, 7); ctx.fill();
+      st.y += st.s; if (st.y > c.height) st.y = -2;
+    }
+    requestAnimationFrame(draw);
+  })(0);
+})();
+
+/* ---------- persistence ---------- */
+function saveHistory() {
+  localStorage.setItem("jarvis-history", JSON.stringify(history.filter(m => m.role === "user" || (m.role === "assistant" && !m.tool_calls))));
+}
+function loadHistory() {
+  try {
+    const saved = JSON.parse(localStorage.getItem("jarvis-history") || "[]");
+    for (const m of saved.slice(-20)) {
+      history.push(m);
+      addMsg(m.role === "user" ? "user" : "jarvis", m.content);
+    }
+    if (saved.length) return true;
+  } catch {}
+  return false;
+}
+clearBtn.addEventListener("click", () => {
+  history = [{ role: "system", content: SYSTEM_PROMPT }];
+  localStorage.removeItem("jarvis-history");
+  chatEl.innerHTML = "";
+  greet();
+});
+
+/* ---------- status ---------- */
+async function checkOllama() {
+  try {
+    const r = await fetch(OLLAMA + "/api/tags");
+    const data = await r.json();
+    const hasModel = (data.models || []).some(m => m.name.startsWith(MODEL.split(":")[0]));
+    ollamaOnline = true;
+    statusEl.classList.add("online");
+    statusText.textContent = hasModel ? MODEL : "המודל בהורדה…";
+  } catch {
+    ollamaOnline = false;
+    statusEl.classList.remove("online");
+    statusText.textContent = "Ollama לא זמין";
+  }
+}
+checkOllama(); setInterval(checkOllama, 5000);
+
+/* ---------- chat UI ---------- */
+function addMsg(role, text, isError = false) {
+  const div = document.createElement("div");
+  div.className = "msg " + role + (isError ? " error" : "");
+  div.textContent = text;
+  chatEl.appendChild(div);
+  chatEl.scrollTop = chatEl.scrollHeight;
+  return div;
+}
+const IDLE_HINT = () => (lang === "he" ? "לחץ על הליבה כדי לדבר, או כתוב למטה" : "Click the core to talk, or type below");
+function setOrb(state, hint) {
+  orb.className = state || "";
+  orbHint.textContent = hint || IDLE_HINT();
+}
+
+/* ---------- Ollama chat with tool-calling ---------- */
+const TOOL_NAMES = new Set(TOOL_DEFS.map(t => t.function.name));
+
+// Some models emit tool calls as raw text instead of structured tool_calls —
+// detect {"name": ..., "arguments": ...} patterns in the content as a fallback.
+// Scan for balanced {...} blocks and keep the ones that parse as a tool call.
+// A regex can't do this: the argument object nests, and models vary the key names
+// ("name"/"tool_name"/"function", "arguments"/"parameters"/"args").
+function findJsonObjects(text) {
+  const found = [];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== "{") continue;
+    let depth = 0, inStr = false, esc = false;
+    for (let j = i; j < text.length; j++) {
+      const c = text[j];
+      if (esc) { esc = false; continue; }
+      if (c === "\\") { esc = true; continue; }
+      if (c === '"') { inStr = !inStr; continue; }
+      if (inStr) continue;
+      if (c === "{") depth++;
+      else if (c === "}") {
+        depth--;
+        if (depth === 0) { found.push({ start: i, end: j + 1, text: text.slice(i, j + 1) }); i = j; break; }
+      }
+    }
+  }
+  return found;
+}
+
+function asToolCall(obj) {
+  if (!obj || typeof obj !== "object") return null;
+  const name = obj.name || obj.tool_name || obj.tool || obj.function;
+  if (typeof name !== "string" || !TOOL_NAMES.has(name)) return null;
+  let args = obj.arguments ?? obj.parameters ?? obj.args ?? obj.input ?? {};
+  if (typeof args === "string") { try { args = JSON.parse(args); } catch { args = {}; } }
+  if (!args || typeof args !== "object") args = {};
+  return { function: { name, arguments: args } };
+}
+
+function extractInlineToolCalls(text) {
+  const calls = [];
+  for (const blob of findJsonObjects(text)) {
+    let parsed;
+    try { parsed = JSON.parse(blob.text); } catch { continue; }
+    const call = asToolCall(parsed);
+    if (call) calls.push(call);
+  }
+  return calls;
+}
+
+function stripToolMarkup(text) {
+  let out = text.replace(/<\/?tool_call>/g, "");
+  const blobs = findJsonObjects(out).filter((b) => {
+    try { return !!asToolCall(JSON.parse(b.text)); } catch { return false; }
+  });
+  for (let i = blobs.length - 1; i >= 0; i--) {
+    out = out.slice(0, blobs[i].start) + out.slice(blobs[i].end);
+  }
+  return out.trim();
+}
+
+let supportsTools = true; // flips off automatically if the model rejects the tools param
+
+async function chatOnce(bubble) {
+  const payload = {
+    model: MODEL, messages: history, stream: true,
+    keep_alive: "30m", options: { temperature: 0.6 },
+  };
+  if (supportsTools) payload.tools = TOOL_DEFS;
+  let resp = await fetch(OLLAMA + "/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!resp.ok && supportsTools) {
+    const errText = await resp.text();
+    if (/does not support tools/i.test(errText)) {
+      supportsTools = false; // retry without native tools — inline JSON parsing still works
+      delete payload.tools;
+      resp = await fetch(OLLAMA + "/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    }
+  }
+  if (!resp.ok) throw new Error("HTTP " + resp.status);
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let full = "", buf = "", toolCalls = [];
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split("\n"); buf = lines.pop();
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const j = JSON.parse(line);
+        const msg = j.message || {};
+        if (msg.content) {
+          full += msg.content;
+          bubble.textContent = stripToolMarkup(full) || "…";
+          chatEl.scrollTop = chatEl.scrollHeight;
+        }
+        if (msg.tool_calls) toolCalls.push(...msg.tool_calls);
+      } catch {}
+    }
+  }
+  if (toolCalls.length === 0) toolCalls = extractInlineToolCalls(full);
+  return { content: stripToolMarkup(full), toolCalls };
+}
+
+function chime() {
+  try {
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.connect(g); g.connect(ac.destination);
+    o.frequency.value = 880;
+    g.gain.setValueAtTime(0.18, ac.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.5);
+    o.start(); o.stop(ac.currentTime + 0.5);
+  } catch {}
+}
+
+// timers run in the page so the reminder can chime and speak
+function runTimerTool(args) {
+  const mins = parseFloat(args.minutes);
+  if (!mins || mins <= 0) return { error: "משך לא תקין" };
+  const msg = (args.message || "").trim() || "הטיימר הסתיים";
+  setTimeout(() => {
+    chime();
+    addMsg("jarvis", "⏰ תזכורת: " + msg);
+    speak("תזכורת: " + msg);
+  }, mins * 60000);
+  return { timer_set: true, minutes: mins, message: msg };
+}
+
+// Models sometimes wrap the real arguments one level deeper, e.g.
+// {"tool_name": "mc_do", "parameters": {...}} — unwrap before dispatching.
+function unwrapArgs(args) {
+  if (!args || typeof args !== "object") return {};
+  for (const key of ["parameters", "arguments", "args", "input"]) {
+    const inner = args[key];
+    if (inner && typeof inner === "object" && !Array.isArray(inner)) {
+      const siblings = Object.keys(args).filter((k) => k !== key && k !== "tool_name" && k !== "name");
+      if (!siblings.length) return unwrapArgs(inner);
+    }
+  }
+  return args;
+}
+
+async function runTool(name, rawArgs) {
+  const args = unwrapArgs(rawArgs);
+  if (name === "set_timer") return runTimerTool(args);
+  const r = await fetch("/tool", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, args }),
+  });
+  return await r.json();
+}
+
+async function send(text) {
+  if (!text.trim() || busy) return;
+  busy = true;
+  window.speechSynthesis.cancel();
+  addMsg("user", text);
+  history.push({ role: "user", content: text });
+  setOrb("thinking", "ג'רוויס חושב…");
+  let bubble = addMsg("jarvis", "…");
+
+  try {
+    let rounds = 0;
+    while (rounds++ < 4) {
+      let { content, toolCalls } = await chatOnce(bubble);
+      if (toolCalls.length === 0) {
+        history.push({ role: "assistant", content });
+        saveHistory();
+        speak(content);
+        break;
+      }
+      // model wants tools — run them and loop
+      if (!/[א-ת]{2,}/.test(content)) { content = ""; bubble.textContent = "…"; } // hide leaked fragments
+      const assistantMsg = { role: "assistant", content };
+      if (supportsTools) assistantMsg.tool_calls = toolCalls;
+      history.push(assistantMsg);
+      for (const tc of toolCalls) {
+        const fname = tc.function?.name || "?";
+        let fargs = tc.function?.arguments || {};
+        if (typeof fargs === "string") { try { fargs = JSON.parse(fargs); } catch { fargs = {}; } }
+        addMsg("tool-note", (TOOL_LABELS[fname] || "⚙ " + fname) + "…");
+        const result = await runTool(fname, fargs);
+        if (supportsTools) {
+          history.push({ role: "tool", tool_name: fname, content: JSON.stringify(result, null, 0) });
+        } else {
+          history.push({ role: "user", content: "[תוצאת הכלי " + fname + "]: " + JSON.stringify(result, null, 0) });
+        }
+      }
+      if (bubble.textContent === "…" || bubble.textContent === "") bubble.textContent = "…";
+      else bubble = addMsg("jarvis", "…");
+      setOrb("thinking", "ג'רוויס מעבד את התוצאה…");
+    }
+  } catch (e) {
+    bubble.textContent = ollamaOnline
+      ? "שגיאה בשיחה עם המודל: " + e.message
+      : "Ollama לא רץ כרגע. פתח את Ollama ונסה שוב.";
+    bubble.classList.add("error");
+    setOrb("", "");
+  } finally {
+    busy = false;
+    if (!window.speechSynthesis.speaking) setOrb("", "");
+  }
+}
+
+/* ---------- text-to-speech ---------- */
+function rankVoice(v) {
+  const want = lang === "he" ? "he" : "en";
+  if (!v.lang || !v.lang.toLowerCase().startsWith(want)) return -1;
+  let score = 1;
+  if (/natural|online/i.test(v.name)) score += 10;   // Edge natural voices
+  if (lang === "he" && /avri|hila/i.test(v.name)) score += 5;
+  if (lang === "en" && /aria|jenny|guy|zira|david/i.test(v.name)) score += 3;
+  if (v.localService === false) score += 2;
+  return score;
+}
+function pickVoice() {
+  const voices = window.speechSynthesis.getVoices();
+  let best = null, bestScore = 0;
+  for (const v of voices) {
+    const s = rankVoice(v);
+    if (s > bestScore) { best = v; bestScore = s; }
+  }
+  return best;
+}
+function updateVoiceWarning() {
+  const voices = window.speechSynthesis.getVoices();
+  if (!voices.length) return; // not loaded yet
+  if (pickVoice() || lang !== "he") { voiceWarning.style.display = "none"; return; }
+  voiceWarning.innerHTML = "⚠️ לא מותקן קול עברי בדפדפן הזה — התשובות יישמעו באנגלית. <b>פתרון מהיר:</b> פתח את הדף ב-<b>Microsoft Edge</b>, או חזור למצב English.";
+  voiceWarning.style.display = "block";
+}
+function cleanForSpeech(text) {
+  return text
+    .replace(/[*_#`>~\[\]()]/g, " ")
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "")
+    .replace(/\s+/g, " ").trim();
+}
+function speak(text) {
+  if (!speakEnabled || !("speechSynthesis" in window)) { setOrb("", ""); maybeRelisten(); return; }
+  const clean = cleanForSpeech(text);
+  if (!clean) { setOrb("", ""); maybeRelisten(); return; }
+  // split long text into sentence chunks (Chrome cuts off long utterances)
+  const chunks = clean.match(/[^.!?׃]+[.!?׃]?/g) || [clean];
+  const voice = pickVoice();
+  let remaining = chunks.length;
+  setOrb("speaking", lang === "he" ? "ג'רוויס מדבר…" : "Jarvis is speaking…");
+  for (const chunk of chunks) {
+    const u = new SpeechSynthesisUtterance(chunk.trim());
+    if (voice) u.voice = voice;
+    u.lang = SPEECH_LANG; u.rate = 1.05;
+    u.onend = u.onerror = () => {
+      if (--remaining <= 0) { setOrb("", ""); maybeRelisten(); }
+    };
+    window.speechSynthesis.speak(u);
+  }
+}
+speakToggle.classList.toggle("off", !speakEnabled);
+speakToggle.addEventListener("click", () => {
+  speakEnabled = !speakEnabled;
+  speakToggle.classList.toggle("off", !speakEnabled);
+  localStorage.setItem("jarvis-speak", speakEnabled ? "on" : "off");
+  if (!speakEnabled) window.speechSynthesis.cancel();
+});
+
+/* ---------- speech-to-text ---------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognizing = false, recognition = null;
+
+if (SR) {
+  recognition = new SR();
+  recognition.lang = SPEECH_LANG;
+  recognition.interimResults = true;
+  recognition.continuous = false;
+
+  recognition.onstart = () => {
+    recognizing = true;
+    micBtn.classList.add("on");
+    setOrb("listening", "מקשיב… דבר עכשיו");
+  };
+  recognition.onresult = (e) => {
+    let interim = "", final = "";
+    for (const res of e.results) {
+      if (res.isFinal) final += res[0].transcript;
+      else interim += res[0].transcript;
+    }
+    if (interim) orbHint.textContent = "שומע: " + interim;
+    if (final) send(final);
+  };
+  recognition.onend = () => {
+    recognizing = false;
+    micBtn.classList.remove("on");
+    if (!busy && !window.speechSynthesis.speaking) setOrb("", "");
+  };
+  recognition.onerror = (e) => {
+    recognizing = false;
+    micBtn.classList.remove("on");
+    if (e.error === "not-allowed") addMsg("jarvis", "אין הרשאת מיקרופון. אשר את המיקרופון בדפדפן, או כתוב לי.", true);
+    setOrb("", "");
+  };
+} else {
+  micBtn.disabled = true;
+  micBtn.title = "זיהוי דיבור לא נתמך בדפדפן הזה — נסה Chrome או Edge";
+}
+
+function startListening() {
+  if (!recognition || recognizing || busy) return;
+  window.speechSynthesis.cancel();
+  if (wakeRec && wakeActive) { try { wakeRec.stop(); } catch {} } // only one recognizer may hold the mic
+  setTimeout(() => { try { recognition.start(); } catch {} }, wakeActive ? 250 : 0);
+}
+function toggleMic() {
+  if (!recognition) return;
+  if (window.speechSynthesis.speaking) { window.speechSynthesis.cancel(); setOrb("", ""); return; }
+  if (recognizing) recognition.stop();
+  else startListening();
+}
+micBtn.addEventListener("click", toggleMic);
+orb.addEventListener("click", toggleMic);
+
+/* ---------- wake word: "היי ג'רוויס" ---------- */
+let wakeMode = localStorage.getItem("jarvis-wake") === "on";
+let wakeActive = false, wakeRec = null;
+// tolerant: speech recognition spells the name many ways (ג'רוויס / ג'ארוויס / ג'רביס …)
+const WAKE_RE = lang === "he"
+  ? /(?:היי?\s*)?ג['׳]?[אי]?ר[ובו]{1,2}י?ס/
+  : /(?:hey\s*|hi\s*|ok\s*)?jarvis/i;
+
+if (SR) {
+  wakeRec = new SR();
+  wakeRec.lang = "he-IL";
+  wakeRec.continuous = true;
+  wakeRec.interimResults = false;
+  wakeRec.onstart = () => { wakeActive = true; updateWakeHint(); };
+  wakeRec.onend = () => { wakeActive = false; updateWakeHint(); };
+  wakeRec.onerror = (e) => {
+    wakeActive = false;
+    if (e.error === "not-allowed") { wakeMode = false; updateWakeUI(); }
+  };
+  wakeRec.onresult = (e) => {
+    const t = e.results[e.results.length - 1][0].transcript.trim();
+    const m = t.match(WAKE_RE);
+    if (!m) return;
+    const command = t.slice(t.indexOf(m[0]) + m[0].length).trim();
+    try { wakeRec.stop(); } catch {}
+    chime();
+    if (command.length > 2) send(command);
+    else startListening();
+  };
+}
+
+function updateWakeHint() {
+  if (wakeActive && !busy && !recognizing && !window.speechSynthesis.speaking) {
+    orbHint.textContent = lang === "he" ? "👂 מחכה ל\"היי ג'רוויס\"…" : "👂 Waiting for \"Hey Jarvis\"…";
+  }
+}
+const wakeToggle = document.getElementById("wake-toggle");
+function updateWakeUI() { wakeToggle.classList.toggle("active", wakeMode); }
+if (!SR) { wakeToggle.disabled = true; wakeToggle.title = "לא נתמך בדפדפן הזה"; }
+updateWakeUI();
+wakeToggle.addEventListener("click", () => {
+  wakeMode = !wakeMode;
+  localStorage.setItem("jarvis-wake", wakeMode ? "on" : "off");
+  updateWakeUI();
+  if (!wakeMode && wakeActive) { try { wakeRec.stop(); } catch {} setOrb("", ""); }
+});
+
+// keep the wake listener alive when idle, paused while Jarvis works or speaks
+setInterval(() => {
+  if (!wakeRec) return;
+  const shouldRun = wakeMode && !recognizing && !busy && !window.speechSynthesis.speaking;
+  if (shouldRun && !wakeActive) { try { wakeRec.start(); } catch {} }
+  if (!shouldRun && wakeActive) { try { wakeRec.stop(); } catch {} }
+}, 800);
+
+/* conversation mode: auto-listen again after Jarvis finishes speaking */
+function maybeRelisten() {
+  if (convoMode && recognition && !busy) setTimeout(startListening, 350);
+}
+convoToggle.classList.toggle("active", convoMode);
+convoToggle.addEventListener("click", () => {
+  convoMode = !convoMode;
+  convoToggle.classList.toggle("active", convoMode);
+  localStorage.setItem("jarvis-convo", convoMode ? "on" : "off");
+});
+
+/* ---------- input events ---------- */
+sendBtn.addEventListener("click", () => { send(input.value); input.value = ""; });
+input.addEventListener("keydown", (e) => { if (e.key === "Enter") { send(input.value); input.value = ""; } });
+
+/* ---------- init ---------- */
+if (window.speechSynthesis) {
+  window.speechSynthesis.getVoices();
+  window.speechSynthesis.onvoiceschanged = updateVoiceWarning;
+  setTimeout(updateVoiceWarning, 1500);
+}
+function greet() {
+  addMsg("jarvis", lang === "he"
+    ? "שלום! אני ג'רוויס. אני יכול לפתוח תוכנות, לרשום פתקים, לקבוע תזכורות, ולשחק מיינקראפט. נסה: \"מה השעה?\" או \"תכרות עץ במיינקראפט\"."
+    : "Hi! I'm Jarvis. I can open apps, take notes, set reminders, check your PC, and play Minecraft with you. Try: \"what time is it?\", \"chop some wood in Minecraft\", or \"teach yourself to make a pickaxe\".");
+}
+
+/* ---------- language switch ---------- */
+const langToggle = document.getElementById("lang-toggle");
+document.getElementById("lang-label").textContent = lang === "he" ? "עב" : "EN";
+document.getElementById("wake-label").textContent = lang === "he" ? "היי ג'רוויס" : "Hey Jarvis";
+document.getElementById("text-input").placeholder = lang === "he" ? "כתוב הודעה לג'רוויס…" : "Type a message to Jarvis…";
+document.getElementById("send-btn").textContent = lang === "he" ? "שלח" : "Send";
+if (lang !== "he") {
+  document.documentElement.lang = "en";
+  document.documentElement.dir = "ltr";
+  orbHint.textContent = "Click the core to talk, or type below";
+}
+langToggle.addEventListener("click", () => {
+  localStorage.setItem("jarvis-lang", lang === "he" ? "en" : "he");
+  localStorage.removeItem("jarvis-history");
+  location.reload();
+});
+if (!loadHistory()) greet();
+</script>
+</body>
+</html>

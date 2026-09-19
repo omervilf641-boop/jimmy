@@ -1,0 +1,20 @@
+{
+  "_comment": "MCP servers Jarvis may use. Each one is launched on startup and its tools appear to Jarvis automatically. Add any server from https://github.com/modelcontextprotocol/servers — set \"disabled\": true to keep one configured but off.",
+
+  "servers": {
+    "files": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "C:/Users/homet/OnedriveVilf/OneDrive/Documents/GitHub"
+      ]
+    },
+
+    "memory": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"],
+      "disabled": true
+    }
+  }
+}
